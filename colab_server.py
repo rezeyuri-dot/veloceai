@@ -27,6 +27,19 @@ def health():
     ready = ROOT.exists() and INFER.exists() and MODEL.exists()
     return {"ok": ready, "engine": "Real-ESRGAN x4plus", "message": "ready" if ready else "model files missing"}
 
+def apply_adjustments(image_path: Path, sharpness: float, contrast: float, brightness: float):
+    from PIL import Image, ImageEnhance
+    with Image.open(image_path) as opened:
+        image = opened.convert('RGB')
+    image = ImageEnhance.Sharpness(image).enhance(max(0.0, min(2.0, sharpness)))
+    image = ImageEnhance.Contrast(image).enhance(max(0.5, min(1.5, contrast)))
+    image = ImageEnhance.Brightness(image).enhance(max(0.5, min(1.5, brightness)))
+    image.save(image_path, format='PNG')
+
+def validate_adjustments(sharpness: float, contrast: float, brightness: float):
+    if not (0 <= sharpness <= 2 and 0.5 <= contrast <= 1.5 and 0.5 <= brightness <= 1.5):
+        raise HTTPException(400, 'Invalid finishing settings.')
+
 def run_upscale(input_path: Path, output_dir: Path, outscale: int):
     if not INFER.exists():
         raise HTTPException(503, "Real-ESRGAN repository not found in this Colab session.")
@@ -47,9 +60,10 @@ def run_upscale(input_path: Path, output_dir: Path, outscale: int):
     return outputs[0]
 
 @app.post("/api/enhance/image")
-async def enhance_image(file: UploadFile = File(...), scale: int = 2):
+async def enhance_image(file: UploadFile = File(...), scale: int = 2, sharpness: float = 0.4, contrast: float = 1.05, brightness: float = 1.0):
     if scale not in (2, 4):
         raise HTTPException(400, "scale must be 2 or 4")
+    validate_adjustments(sharpness, contrast, brightness)
     suffix = Path(file.filename or "upload.png").suffix.lower()
     if suffix not in (".png", ".jpg", ".jpeg", ".webp", ".bmp"):
         raise HTTPException(400, "Upload a PNG, JPG, JPEG, WEBP, or BMP image.")
@@ -61,6 +75,7 @@ async def enhance_image(file: UploadFile = File(...), scale: int = 2):
             raise HTTPException(413, "Image limit is 25 MB.")
         src.write_bytes(data)
         result = run_upscale(src, out, scale)
+        apply_adjustments(result, sharpness, contrast, brightness)
         # Return bytes before the temporary directory is removed.
         from fastapi.responses import Response
         mime = "image/png" if result.suffix.lower() == ".png" else "application/octet-stream"
@@ -68,9 +83,10 @@ async def enhance_image(file: UploadFile = File(...), scale: int = 2):
                         headers={"Content-Disposition": 'attachment; filename="veloceai-enhanced.png"'})
 
 @app.post("/api/enhance/video")
-async def enhance_video(file: UploadFile = File(...), scale: int = 2):
+async def enhance_video(file: UploadFile = File(...), scale: int = 2, sharpness: float = 0.4, contrast: float = 1.05, brightness: float = 1.0):
     if scale not in (2, 4):
         raise HTTPException(400, "scale must be 2 or 4")
+    validate_adjustments(sharpness, contrast, brightness)
     suffix = Path(file.filename or "upload.mp4").suffix.lower()
     if suffix not in (".mp4", ".mov", ".mkv", ".webm"):
         raise HTTPException(400, "Upload MP4, MOV, MKV, or WEBM.")
@@ -101,9 +117,15 @@ async def enhance_video(file: UploadFile = File(...), scale: int = 2):
         if extract.returncode != 0:
             raise HTTPException(400, "Could not extract video frames: " + extract.stderr[-1000:])
         run_upscale(frames, enhanced, scale)
+        enhanced_frames = sorted(enhanced.glob("*_veloceai.png"))
+        if not enhanced_frames:
+            raise HTTPException(500, "AI produced no numbered video frames.")
+        for frame in enhanced_frames:
+            apply_adjustments(frame, sharpness, contrast, brightness)
         out_video = work / "veloceai-enhanced.mp4"
-        # Real-ESRGAN outputs frame names with suffix; sort numerically and encode at source FPS.
         pattern = str(enhanced / "%08d_veloceai.png")
+        if not (enhanced / "00000001_veloceai.png").exists():
+            raise HTTPException(500, "AI frame names do not match the expected numbered sequence.")
         fps = subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", "v:0",
              "-show_entries", "stream=r_frame_rate", "-of", "default=nw=1:nk=1", str(src)],
@@ -117,7 +139,7 @@ async def enhance_video(file: UploadFile = File(...), scale: int = 2):
              "-shortest", "-movflags", "+faststart", str(out_video)],
             capture_output=True, text=True, timeout=900
         )
-        if encode.returncode != 0 or not out_video.exists():
+        if encode.returncode != 0 or not out_video.exists() or out_video.stat().st_size == 0:
             raise HTTPException(500, "Could not rebuild the enhanced video: " + encode.stderr[-1400:])
         from fastapi.responses import Response
         return Response(content=out_video.read_bytes(), media_type="video/mp4",

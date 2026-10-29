@@ -16,7 +16,7 @@
 </head>
 <body><main class="wrap">
 <header class="top"><div class="brand">Veloce<span>AI</span>.io</div><div class="pill" id="engineBadge">ENGINE OFFLINE · COLAB</div></header>
-<section class="hero"><div class="eyebrow">AI RESTORATION WORKSPACE</div><h1>Every frame.<br><span style="color:var(--pink)">More detail.</span></h1><p>AI upscale for images and videos with adjustable finishing controls, before/after review, and original video audio preservation.</p><div class="engine-strip"><span class="engine-dot"></span><span><strong>Real-ESRGAN ×4</strong> · Colab processing engine</span><span class="engine-state" id="engineState">Checking connection…</span></div></section>
+<section class="hero"><div class="eyebrow">AI RESTORATION WORKSPACE</div><h1>Every frame.<br><span style="color:var(--pink)">More detail.</span></h1><p>AI upscaling for images and videos, preserving original colors and audio.</p><div class="engine-strip"><span class="engine-dot"></span><span><strong>Real-ESRGAN ×4</strong> · Colab processing engine</span><span class="engine-state" id="engineState">Checking connection…</span></div></section>
 <div class="notice"><strong>AI engine connection:</strong> Paste the temporary API address shown by your running Google Colab session. Without it, the page only makes browser adjustments. The free Colab session is temporary.</div><section class="panel" style="margin-bottom:16px"><h2>Connect Google Colab</h2><label for="apiUrl" style="display:block;color:var(--muted);font-size:13px;margin-bottom:7px">Temporary API URL</label><input id="apiUrl" type="url" value="https://inputs-roster-ruby-links.trycloudflare.com" placeholder="https://your-temporary-tunnel-url" style="width:100%;min-width:0" autocomplete="url"><p style="color:var(--muted);font-size:12px;margin:8px 0 0">Only use the temporary address created by your own Colab session. Keep the session running during processing.</p></section>
 <div class="grid">
 <section class="panel"><h2><span class="step">01</span> Import media</h2><div class="tabs"><button class="tab active" id="imageTab">Image</button><button class="tab" id="videoTab">Video</button></div>
@@ -24,9 +24,9 @@
 <div class="preview" id="originalPreview">Your original preview appears here</div>
 <div class="status" id="fileInfo">No file selected.</div></section>
 <section class="panel"><h2><span class="step">02</span> Adjust & export</h2><div class="controls">
-<div class="control"><label for="sharp">Sharpness <span id="sharpVal">20</span></label><input id="sharp" type="range" min="0" max="100" value="20"></div>
-<div class="control"><label for="contrast">Contrast <span id="contrastVal">105</span>%</label><input id="contrast" type="range" min="80" max="140" value="105"></div>
-<div class="control"><label for="brightness">Brightness <span id="brightVal">100</span>%</label><input id="brightness" type="range" min="80" max="120" value="100"></div>
+<div class="control"><label for="sharp">Detail sharpening <span id="sharpVal">0</span>%</label><input id="sharp" type="range" min="0" max="50" value="0"></div>
+<div class="control"><label>Color processing</label><div style="padding:9px 0;color:#86efac;font-size:13px">Off · preserve original colors</div></div>
+<div class="control"><label>Brightness / contrast</label><div style="padding:9px 0;color:#86efac;font-size:13px">No change</div></div>
 <div class="control"><label for="scale">AI upscale</label><select id="scale"><option value="2">AI upscale 2×</option><option value="4">AI upscale 4× (larger file)</option></select></div>
 </div>
 <div class="preview" id="enhancedPreview">Enhanced preview appears here</div>
@@ -50,11 +50,11 @@ const setStatus=t=>$('status').textContent=t;
 function clearObjectUrls(){if(objectUrl)URL.revokeObjectURL(objectUrl);if(resultUrl)URL.revokeObjectURL(resultUrl);objectUrl=null;resultUrl=null;resultBlob=null}
 function setMode(m){mode=m;imageTab.classList.toggle('active',m==='image');videoTab.classList.toggle('active',m==='video');$('dropTitle').textContent=m==='image'?'Upload an image':'Upload a video (max 45 seconds)';$('dropText').textContent=m==='image'?'JPG, PNG, WEBP':'MP4, WEBM, MOV (browser support varies)';fileInput.accept=m==='image'?'image/*':'video/*';fileInput.value='';file=null;originalImg=null;videoEl=null;$('originalPreview').textContent='Choose a '+m+' file';$('enhancedPreview').textContent='Enhanced preview appears here';$('compareOriginal').textContent='Waiting for media';$('compareEnhanced').textContent='Waiting for media';$('fileInfo').textContent='No file selected.';$('processBtn').disabled=true;$('downloadBtn').disabled=true;clearObjectUrls();setStatus('Choose a '+m+' file to begin.')}
 imageTab.onclick=()=>setMode('image');videoTab.onclick=()=>setMode('video');
-function settings(){return {sharp:Number($('sharp').value),contrast:Number($('contrast').value),brightness:Number($('brightness').value),scale:Number($('scale').value)}}
+function settings(){return {sharp:Number($('sharp').value),scale:Number($('scale').value)}}
 $('apiUrl').addEventListener('change',checkEngine);
 checkEngine();
-function filterString(){let s=settings();return `contrast(${s.contrast}%) brightness(${s.brightness}%) saturate(100%)`}
-['sharp','contrast','brightness','scale'].forEach(id=>$(id).addEventListener('input',()=>{if(id==='sharp')$('sharpVal').textContent=$('sharp').value;if(id==='contrast')$('contrastVal').textContent=$('contrast').value;if(id==='brightness')$('brightVal').textContent=$('brightness').value;updatePreview()}));
+function filterString(){return 'none'}
+['sharp','scale'].forEach(id=>$(id).addEventListener('input',()=>{if(id==='sharp')$('sharpVal').textContent=$('sharp').value;updatePreview()}));
 function updatePreview(){if(mode==='image'&&originalImg){const im=originalImg.cloneNode();im.style.filter=filterString();$('enhancedPreview').replaceChildren(im);$('compareEnhanced').replaceChildren(im.cloneNode());$('compareEnhanced').firstChild.style.filter=filterString()}else if(mode==='video'&&videoEl){videoEl.style.filter=filterString();}}
 fileInput.addEventListener('change',async()=>{const f=fileInput.files&&fileInput.files[0];if(!f)return;clearObjectUrls();file=f;objectUrl=URL.createObjectURL(f);$('processBtn').disabled=false;$('downloadBtn').disabled=true;resultBlob=null;
 if(mode==='image'){if(!f.type.startsWith('image/')){setStatus('Please choose a valid image.');return}const img=new Image();img.onload=()=>{originalImg=img;$('originalPreview').replaceChildren(img);$('compareOriginal').replaceChildren(img.cloneNode());$('fileInfo').textContent=`${f.name} · ${img.naturalWidth} × ${img.naturalHeight}`;updatePreview();setStatus('Image loaded. Adjust settings, then apply and download.')};img.onerror=()=>setStatus('Could not open this image. Try JPG or PNG.');img.src=objectUrl;
@@ -71,9 +71,7 @@ async function processWithColab(api){
   const s=settings(); const body=new FormData(); body.append('file',file,file.name);
   endpoint.pathname=(mode==='image'?'/api/enhance/image':'/api/enhance/video');
   endpoint.searchParams.set('scale',String(s.scale===4?4:2));
-  endpoint.searchParams.set('sharpness',String(s.sharp/50));
-  endpoint.searchParams.set('contrast',String(s.contrast/100));
-  endpoint.searchParams.set('brightness',String(s.brightness/100));
+  endpoint.searchParams.set('sharpness',String(1+s.sharp/100));
   $('processBtn').disabled=true;$('downloadBtn').disabled=true;
   setStatus('Uploading to Google Colab. Keep the Colab session running…');
   try {

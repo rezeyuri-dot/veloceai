@@ -1,5 +1,6 @@
 """VeloceAI inference API using Spandrel (no BasicSR dependency)."""
 import subprocess, tempfile
+from functools import wraps
 from pathlib import Path
 import numpy as np
 import torch
@@ -19,7 +20,26 @@ descriptor = None
 progress_state = {"percent": 0, "stage": "idle", "busy": False}
 
 def set_progress(percent, stage):
-    progress_state.update({"percent": max(0, min(100, int(percent))), "stage": stage})
+    progress_state.update({"percent": max(0, min(100, int(percent))), "stage": str(stage)})
+
+
+def track_progress(func):
+    """Keep progress state recoverable when validation or processing fails."""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except HTTPException as exc:
+            detail = str(exc.detail).replace("\\n", " ")[:100]
+            progress_state.update({"percent": 0, "stage": "Failed: " + detail, "busy": False})
+            raise
+        except Exception as exc:
+            detail = str(exc).replace("\\n", " ")[:100] or exc.__class__.__name__
+            progress_state.update({"percent": 0, "stage": "Failed: " + detail, "busy": False})
+            raise HTTPException(500, "Processing failed: " + detail) from exc
+        finally:
+            progress_state["busy"] = False
+    return wrapper
 
 @app.get("/progress")
 def get_progress():
@@ -27,12 +47,12 @@ def get_progress():
 
 
 @app.post("/api/preview/video")
-async def preview_video(file: UploadFile = File(...)):
+def preview_video(file: UploadFile = File(...)):
     """Extract a browser-friendly PNG thumbnail for videos whose codecs cannot preview locally."""
     suffix = Path(file.filename or "video.mp4").suffix.lower()
     if suffix not in (".mp4", ".mov", ".mkv", ".webm"):
         raise HTTPException(400, "Unsupported video format.")
-    data = await file.read()
+    data = file.file.read()
     if not data:
         raise HTTPException(400, "The uploaded video is empty.")
     if len(data) > 150 * 1024 * 1024:
@@ -84,8 +104,15 @@ def validate(scale, sharpness, denoise, crf, profile, line_detail, anti_alias):
     if profile not in ("general", "anime", "real"): raise HTTPException(400,"Invalid processing profile.")
     if not 0 <= line_detail <= 100: raise HTTPException(400,"Line detail must be between 0 and 100.")
     if not 0 <= anti_alias <= 100: raise HTTPException(400,"Anti-alias must be between 0 and 100.")
-    try: load_model()
-    except Exception as e: raise HTTPException(503,"AI model unavailable: "+str(e))
+    try:
+        if progress_state.get("busy") and descriptor is None:
+            set_progress(max(2, progress_state.get("percent", 1)),
+                         "Loading AI model · first startup may take longer")
+        load_model()
+        if progress_state.get("busy"):
+            set_progress(max(6, progress_state.get("percent", 1)), "AI model ready · preparing media")
+    except Exception as e:
+        raise HTTPException(503,"AI model unavailable: "+str(e))
 
 @torch.inference_mode()
 def enhance_frame(src: Path, dst: Path, scale: int, sharpness: float, denoise: int,
@@ -135,42 +162,47 @@ def enhance_frame(src: Path, dst: Path, scale: int, sharpness: float, denoise: i
     result.save(dst)
 
 @app.post("/api/enhance/image")
-async def enhance_image(file: UploadFile=File(...), scale:int=2, denoise:int=25,
+@track_progress
+def enhance_image(file: UploadFile=File(...), scale:int=2, denoise:int=25,
                         sharpness:float=1.2, crf:int=17, profile:str="anime",
                         line_detail:int=35, anti_alias:int=15):
-    progress_state.update({"percent": 1, "stage": "Receiving image", "busy": True})
+    progress_state.update({"percent": 1, "stage": "Preparing image request", "busy": True})
     validate(scale,sharpness,denoise,crf,profile,line_detail,anti_alias)
     suffix=Path(file.filename or "image.png").suffix.lower()
     if suffix not in (".png",".jpg",".jpeg",".webp",".bmp"): raise HTTPException(400,"Unsupported image format.")
-    data=await file.read()
+    data=file.file.read()
     if len(data)>25*1024*1024: raise HTTPException(413,"Image limit is 25 MB.")
     with tempfile.TemporaryDirectory() as td:
         src=Path(td)/("input"+suffix); dst=Path(td)/"VeloceAI-Restored.png"
         src.write_bytes(data)
         try:
-            set_progress(15, "AI image enhancement")
+            set_progress(15, "AI image enhancement · working")
             enhance_frame(src,dst,scale,sharpness,denoise,profile,line_detail,anti_alias)
-            set_progress(95, "Preparing result")
+            set_progress(95, "Preparing enhanced image")
+            output = dst.read_bytes()
+            if not output:
+                raise RuntimeError("The enhanced image file is empty.")
         except Exception as e:
-            progress_state.update({"stage": "Failed", "busy": False})
-            raise HTTPException(500,"Image AI failed: "+str(e))
+            raise HTTPException(500,"Image AI failed: "+str(e)) from e
         progress_state.update({"percent": 100, "stage": "Complete", "busy": False})
-        return Response(dst.read_bytes(),media_type="image/png",
+        return Response(output,media_type="image/png",
           headers={"Content-Disposition":'attachment; filename="VeloceAI-Restored.png"'})
 
 @app.post("/api/enhance/video")
-async def enhance_video(file:UploadFile=File(...), scale:int=2, denoise:int=25,
+@track_progress
+def enhance_video(file:UploadFile=File(...), scale:int=2, denoise:int=25,
                         sharpness:float=1.2, crf:int=17, crop_black_bars:bool=False,
                         profile:str="anime", line_detail:int=35, anti_alias:int=15):
-    progress_state.update({"percent": 1, "stage": "Receiving video", "busy": True})
+    progress_state.update({"percent": 1, "stage": "Preparing video request", "busy": True})
     validate(scale,sharpness,denoise,crf,profile,line_detail,anti_alias)
     suffix=Path(file.filename or "video.mp4").suffix.lower()
     if suffix not in (".mp4",".mov",".mkv",".webm"): raise HTTPException(400,"Unsupported video format.")
-    data=await file.read()
+    data=file.file.read()
     if len(data)>150*1024*1024: raise HTTPException(413,"Video limit is 150 MB.")
     with tempfile.TemporaryDirectory() as td:
         root=Path(td); src=root/("input"+suffix); frames=root/"frames"; out=root/"out"
         frames.mkdir(); out.mkdir(); src.write_bytes(data)
+        set_progress(7, "Checking video duration and streams")
         probe=subprocess.run(["ffprobe","-v","error","-show_entries","format=duration","-of","csv=p=0",str(src)],capture_output=True,text=True)
         try: duration=float(probe.stdout.strip())
         except: duration=0
@@ -180,6 +212,7 @@ async def enhance_video(file:UploadFile=File(...), scale:int=2, denoise:int=25,
         fps=fp.stdout.strip() or "30/1"
         crop_filter = None
         if crop_black_bars:
+            set_progress(8, "Detecting black bars")
             detect=subprocess.run(["ffmpeg","-hide_banner","-i",str(src),"-vf","cropdetect=24:16:0","-frames:v","120","-f","null","-"],capture_output=True,text=True)
             import re
             crops=re.findall(r"crop=(\d+:\d+:\d+:\d+)",detect.stderr)
@@ -211,8 +244,11 @@ async def enhance_video(file:UploadFile=File(...), scale:int=2, denoise:int=25,
         if enc.returncode or not target.exists():
             progress_state.update({"stage": "Failed", "busy": False})
             raise HTTPException(500,"Video export failed: "+enc.stderr[-1000:])
+        output = target.read_bytes()
+        if not output:
+            raise HTTPException(500, "The enhanced video file is empty.")
         progress_state.update({"percent": 100, "stage": "Complete", "busy": False})
-        return Response(target.read_bytes(),media_type="video/mp4",
+        return Response(output,media_type="video/mp4",
           headers={"Content-Disposition":'attachment; filename="VeloceAI-Restored.mp4"'})
 
 if __name__=="__main__":

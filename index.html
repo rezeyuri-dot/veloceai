@@ -16,7 +16,7 @@
 </head>
 <body><main class="wrap">
 <header class="top"><div class="brand">Veloce<span>AI</span>.io</div><div class="pill" id="engineBadge">ENGINE OFFLINE · COLAB</div></header>
-<section class="hero"><div class="eyebrow">AI RESTORATION WORKSPACE</div><h1>Every frame.<br><span style="color:var(--pink)">More detail.</span></h1><p>A restoration workspace for images and video, designed around before-and-after review, resolution controls, and an AI processing pipeline.</p><div class="engine-strip"><span class="engine-dot"></span><span><strong>Real-ESRGAN ×4</strong> · Colab processing engine</span><span class="engine-state">Not connected</span></div></section>
+<section class="hero"><div class="eyebrow">AI RESTORATION WORKSPACE</div><h1>Every frame.<br><span style="color:var(--pink)">More detail.</span></h1><p>AI upscale for images and videos with adjustable finishing controls, before/after review, and original video audio preservation.</p><div class="engine-strip"><span class="engine-dot"></span><span><strong>Real-ESRGAN ×4</strong> · Colab processing engine</span><span class="engine-state" id="engineState">Checking connection…</span></div></section>
 <div class="notice"><strong>AI engine connection:</strong> Paste the temporary API address shown by your running Google Colab session. Without it, the page only makes browser adjustments. The free Colab session is temporary.</div><section class="panel" style="margin-bottom:16px"><h2>Connect Google Colab</h2><label for="apiUrl" style="display:block;color:var(--muted);font-size:13px;margin-bottom:7px">Temporary API URL</label><input id="apiUrl" type="url" value="https://inputs-roster-ruby-links.trycloudflare.com" placeholder="https://your-temporary-tunnel-url" style="width:100%;min-width:0" autocomplete="url"><p style="color:var(--muted);font-size:12px;margin:8px 0 0">Only use the temporary address created by your own Colab session. Keep the session running during processing.</p></section>
 <div class="grid">
 <section class="panel"><h2><span class="step">01</span> Import media</h2><div class="tabs"><button class="tab active" id="imageTab">Image</button><button class="tab" id="videoTab">Video</button></div>
@@ -30,7 +30,7 @@
 <div class="control"><label for="scale">AI upscale</label><select id="scale"><option value="2">AI upscale 2×</option><option value="4">AI upscale 4× (larger file)</option></select></div>
 </div>
 <div class="preview" id="enhancedPreview">Enhanced preview appears here</div>
-<div class="actions"><button class="primary" id="processBtn" disabled>Apply adjustments</button><button id="downloadBtn" disabled>Download result</button></div>
+<div class="actions"><button class="primary" id="processBtn" disabled>Run AI restoration</button><button id="downloadBtn" disabled>Download result</button></div>
 <div class="status" id="status" role="status">Upload an image or video to begin.</div>
 </section></div>
 <section class="panel result"><h2><span class="step">03</span> Before / after review</h2><div class="grid"><div><div class="eyebrow">ORIGINAL</div><div class="preview" id="compareOriginal">Waiting for media</div></div><div><div class="eyebrow">ADJUSTED</div><div class="preview" id="compareEnhanced">Waiting for media</div></div></div></section>
@@ -38,6 +38,12 @@
 </main>
 <script>
 const $=id=>document.getElementById(id);
+async function checkEngine(){
+ const badge=$('engineBadge'), state=$('engineState'), api=$('apiUrl').value.trim().replace(/\\/$/,'');
+ try { const r=await fetch(api+'/health'); if(!r.ok)throw Error(); const d=await r.json(); if(!d.ok)throw Error();
+ badge.textContent='AI ENGINE READY';badge.style.color='#86efac';state.textContent='Connected · Real-ESRGAN';state.style.color='#86efac';state.style.background='#123023';
+ } catch(e) {badge.textContent='ENGINE OFFLINE · COLAB';state.textContent='Not connected';}
+}
 const fileInput=$('fileInput'), imageTab=$('imageTab'), videoTab=$('videoTab');
 let mode='image', file=null, objectUrl=null, originalImg=null, videoEl=null, resultBlob=null, resultUrl=null;
 const setStatus=t=>$('status').textContent=t;
@@ -45,6 +51,8 @@ function clearObjectUrls(){if(objectUrl)URL.revokeObjectURL(objectUrl);if(result
 function setMode(m){mode=m;imageTab.classList.toggle('active',m==='image');videoTab.classList.toggle('active',m==='video');$('dropTitle').textContent=m==='image'?'Upload an image':'Upload a video (max 45 seconds)';$('dropText').textContent=m==='image'?'JPG, PNG, WEBP':'MP4, WEBM, MOV (browser support varies)';fileInput.accept=m==='image'?'image/*':'video/*';fileInput.value='';file=null;originalImg=null;videoEl=null;$('originalPreview').textContent='Choose a '+m+' file';$('enhancedPreview').textContent='Enhanced preview appears here';$('compareOriginal').textContent='Waiting for media';$('compareEnhanced').textContent='Waiting for media';$('fileInfo').textContent='No file selected.';$('processBtn').disabled=true;$('downloadBtn').disabled=true;clearObjectUrls();setStatus('Choose a '+m+' file to begin.')}
 imageTab.onclick=()=>setMode('image');videoTab.onclick=()=>setMode('video');
 function settings(){return {sharp:Number($('sharp').value),contrast:Number($('contrast').value),brightness:Number($('brightness').value),scale:Number($('scale').value)}}
+$('apiUrl').addEventListener('change',checkEngine);
+checkEngine();
 function filterString(){let s=settings();return `contrast(${s.contrast}%) brightness(${s.brightness}%) saturate(100%)`}
 ['sharp','contrast','brightness','scale'].forEach(id=>$(id).addEventListener('input',()=>{if(id==='sharp')$('sharpVal').textContent=$('sharp').value;if(id==='contrast')$('contrastVal').textContent=$('contrast').value;if(id==='brightness')$('brightVal').textContent=$('brightness').value;updatePreview()}));
 function updatePreview(){if(mode==='image'&&originalImg){const im=originalImg.cloneNode();im.style.filter=filterString();$('enhancedPreview').replaceChildren(im);$('compareEnhanced').replaceChildren(im.cloneNode());$('compareEnhanced').firstChild.style.filter=filterString()}else if(mode==='video'&&videoEl){videoEl.style.filter=filterString();}}
@@ -63,6 +71,9 @@ async function processWithColab(api){
   const s=settings(); const body=new FormData(); body.append('file',file,file.name);
   endpoint.pathname=(mode==='image'?'/api/enhance/image':'/api/enhance/video');
   endpoint.searchParams.set('scale',String(s.scale===4?4:2));
+  endpoint.searchParams.set('sharpness',String(s.sharp/50));
+  endpoint.searchParams.set('contrast',String(s.contrast/100));
+  endpoint.searchParams.set('brightness',String(s.brightness/100));
   $('processBtn').disabled=true;$('downloadBtn').disabled=true;
   setStatus('Uploading to Google Colab. Keep the Colab session running…');
   try {

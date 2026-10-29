@@ -16,6 +16,14 @@ app = FastAPI(title="VeloceAI Restoration Engine", version="2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False,
                    allow_methods=["GET","POST","OPTIONS"], allow_headers=["*"])
 descriptor = None
+progress_state = {"percent": 0, "stage": "idle", "busy": False}
+
+def set_progress(percent, stage):
+    progress_state.update({"percent": max(0, min(100, int(percent))), "stage": stage})
+
+@app.get("/progress")
+def get_progress():
+    return dict(progress_state)
 
 def load_model():
     global descriptor
@@ -97,6 +105,7 @@ def enhance_frame(src: Path, dst: Path, scale: int, sharpness: float, denoise: i
 async def enhance_image(file: UploadFile=File(...), scale:int=2, denoise:int=25,
                         sharpness:float=1.2, crf:int=17, profile:str="anime",
                         line_detail:int=35, anti_alias:int=15):
+    progress_state.update({"percent": 1, "stage": "Receiving image", "busy": True})
     validate(scale,sharpness,denoise,crf,profile,line_detail,anti_alias)
     suffix=Path(file.filename or "image.png").suffix.lower()
     if suffix not in (".png",".jpg",".jpeg",".webp",".bmp"): raise HTTPException(400,"Unsupported image format.")
@@ -105,8 +114,14 @@ async def enhance_image(file: UploadFile=File(...), scale:int=2, denoise:int=25,
     with tempfile.TemporaryDirectory() as td:
         src=Path(td)/("input"+suffix); dst=Path(td)/"VeloceAI-Restored.png"
         src.write_bytes(data)
-        try: enhance_frame(src,dst,scale,sharpness,denoise,profile,line_detail,anti_alias)
-        except Exception as e: raise HTTPException(500,"Image AI failed: "+str(e))
+        try:
+            set_progress(15, "AI image enhancement")
+            enhance_frame(src,dst,scale,sharpness,denoise,profile,line_detail,anti_alias)
+            set_progress(95, "Preparing result")
+        except Exception as e:
+            progress_state.update({"stage": "Failed", "busy": False})
+            raise HTTPException(500,"Image AI failed: "+str(e))
+        progress_state.update({"percent": 100, "stage": "Complete", "busy": False})
         return Response(dst.read_bytes(),media_type="image/png",
           headers={"Content-Disposition":'attachment; filename="VeloceAI-Restored.png"'})
 
@@ -114,6 +129,7 @@ async def enhance_image(file: UploadFile=File(...), scale:int=2, denoise:int=25,
 async def enhance_video(file:UploadFile=File(...), scale:int=2, denoise:int=25,
                         sharpness:float=1.2, crf:int=17, crop_black_bars:bool=False,
                         profile:str="anime", line_detail:int=35, anti_alias:int=15):
+    progress_state.update({"percent": 1, "stage": "Receiving video", "busy": True})
     validate(scale,sharpness,denoise,crf,profile,line_detail,anti_alias)
     suffix=Path(file.filename or "video.mp4").suffix.lower()
     if suffix not in (".mp4",".mov",".mkv",".webm"): raise HTTPException(400,"Unsupported video format.")
@@ -136,6 +152,7 @@ async def enhance_video(file:UploadFile=File(...), scale:int=2, denoise:int=25,
             crops=re.findall(r"crop=(\d+:\d+:\d+:\d+)",detect.stderr)
             if crops:
                 crop_filter=crops[-1]
+        set_progress(8, "Extracting video frames")
         extract=["ffmpeg","-y","-v","error","-i",str(src)]
         if crop_filter:
             extract += ["-vf",f"crop={crop_filter}"]
@@ -145,15 +162,23 @@ async def enhance_video(file:UploadFile=File(...), scale:int=2, denoise:int=25,
         inputs=sorted(frames.glob("*.png"))
         if not inputs: raise HTTPException(400,"No video frames found.")
         try:
+            total_frames = len(inputs)
             for i,p in enumerate(inputs,1):
                 enhance_frame(p,out/(f"{i:08d}.png"),scale,sharpness,denoise,profile,line_detail,anti_alias)
-        except Exception as e: raise HTTPException(500,"Video AI failed: "+str(e))
+                set_progress(10 + int(80*i/total_frames), f"Enhancing frame {i}/{total_frames}")
+        except Exception as e:
+            progress_state.update({"stage": "Failed", "busy": False})
+            raise HTTPException(500,"Video AI failed: "+str(e))
+        set_progress(93, "Encoding video and audio")
         target=root/"VeloceAI-Restored.mp4"
         enc=subprocess.run(["ffmpeg","-y","-v","error","-framerate",fps,"-i",str(out/"%08d.png"),"-i",str(src),
           "-map","0:v:0","-map","1:a:0?","-c:v","libx264","-preset","veryfast","-crf",str(crf),
           "-pix_fmt","yuv420p","-c:a","aac","-b:a","192k","-movflags","+faststart","-t",f"{duration:.6f}",str(target)],
           capture_output=True,text=True,timeout=1200)
-        if enc.returncode or not target.exists(): raise HTTPException(500,"Video export failed: "+enc.stderr[-1000:])
+        if enc.returncode or not target.exists():
+            progress_state.update({"stage": "Failed", "busy": False})
+            raise HTTPException(500,"Video export failed: "+enc.stderr[-1000:])
+        progress_state.update({"percent": 100, "stage": "Complete", "busy": False})
         return Response(target.read_bytes(),media_type="video/mp4",
           headers={"Content-Disposition":'attachment; filename="VeloceAI-Restored.mp4"'})
 

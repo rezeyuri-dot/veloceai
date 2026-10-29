@@ -90,8 +90,8 @@ async def enhance_video(file: UploadFile = File(...), scale: int = 2):
         except Exception: duration = 0
         if probe.returncode != 0 or duration <= 0:
             raise HTTPException(400, "Could not read this video. Please use a supported video file.")
-        if duration > 30:
-            raise HTTPException(413, "For this temporary Colab demo, videos are limited to 30 seconds.")
+        if duration > 45:
+            raise HTTPException(413, "Videos are limited to 45 seconds.")
         # Preserve the source frame rate; extract numbered frames for AI inference.
         extract = subprocess.run(
             ["ffmpeg", "-v", "error", "-i", str(src), "-vsync", "0",

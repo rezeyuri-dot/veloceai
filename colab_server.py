@@ -27,18 +27,18 @@ def health():
     ready = ROOT.exists() and INFER.exists() and MODEL.exists()
     return {"ok": ready, "engine": "Real-ESRGAN x4plus", "message": "ready" if ready else "model files missing"}
 
-def apply_adjustments(image_path: Path, sharpness: float, contrast: float, brightness: float):
+def apply_adjustments(image_path: Path, sharpness: float):
+    # Neutral at 1.0: do not alter brightness, contrast, saturation, or color grading.
     from PIL import Image, ImageEnhance
     with Image.open(image_path) as opened:
         image = opened.convert('RGB')
-    image = ImageEnhance.Sharpness(image).enhance(max(0.0, min(2.0, sharpness)))
-    image = ImageEnhance.Contrast(image).enhance(max(0.5, min(1.5, contrast)))
-    image = ImageEnhance.Brightness(image).enhance(max(0.5, min(1.5, brightness)))
+    if abs(sharpness - 1.0) > 1e-6:
+        image = ImageEnhance.Sharpness(image).enhance(max(1.0, min(1.5, sharpness)))
     image.save(image_path, format='PNG')
 
-def validate_adjustments(sharpness: float, contrast: float, brightness: float):
-    if not (0 <= sharpness <= 2 and 0.5 <= contrast <= 1.5 and 0.5 <= brightness <= 1.5):
-        raise HTTPException(400, 'Invalid finishing settings.')
+def validate_adjustments(sharpness: float):
+    if not (1.0 <= sharpness <= 1.5):
+        raise HTTPException(400, 'Sharpness must be between 1.0 and 1.5.')
 
 def run_upscale(input_path: Path, output_dir: Path, outscale: int):
     if not INFER.exists():
@@ -60,10 +60,10 @@ def run_upscale(input_path: Path, output_dir: Path, outscale: int):
     return outputs[0]
 
 @app.post("/api/enhance/image")
-async def enhance_image(file: UploadFile = File(...), scale: int = 2, sharpness: float = 0.4, contrast: float = 1.05, brightness: float = 1.0):
+async def enhance_image(file: UploadFile = File(...), scale: int = 2, sharpness: float = 1.0):
     if scale not in (2, 4):
         raise HTTPException(400, "scale must be 2 or 4")
-    validate_adjustments(sharpness, contrast, brightness)
+    validate_adjustments(sharpness)
     suffix = Path(file.filename or "upload.png").suffix.lower()
     if suffix not in (".png", ".jpg", ".jpeg", ".webp", ".bmp"):
         raise HTTPException(400, "Upload a PNG, JPG, JPEG, WEBP, or BMP image.")
@@ -75,7 +75,7 @@ async def enhance_image(file: UploadFile = File(...), scale: int = 2, sharpness:
             raise HTTPException(413, "Image limit is 25 MB.")
         src.write_bytes(data)
         result = run_upscale(src, out, scale)
-        apply_adjustments(result, sharpness, contrast, brightness)
+        apply_adjustments(result, sharpness)
         # Return bytes before the temporary directory is removed.
         from fastapi.responses import Response
         mime = "image/png" if result.suffix.lower() == ".png" else "application/octet-stream"
@@ -83,7 +83,7 @@ async def enhance_image(file: UploadFile = File(...), scale: int = 2, sharpness:
                         headers={"Content-Disposition": 'attachment; filename="veloceai-enhanced.png"'})
 
 @app.post("/api/enhance/video")
-async def enhance_video(file: UploadFile = File(...), scale: int = 2, sharpness: float = 0.4, contrast: float = 1.05, brightness: float = 1.0):
+async def enhance_video(file: UploadFile = File(...), scale: int = 2, sharpness: float = 1.0):
     if scale not in (2, 4):
         raise HTTPException(400, "scale must be 2 or 4")
     validate_adjustments(sharpness, contrast, brightness)
@@ -121,7 +121,7 @@ async def enhance_video(file: UploadFile = File(...), scale: int = 2, sharpness:
         if not enhanced_frames:
             raise HTTPException(500, "AI produced no numbered video frames.")
         for frame in enhanced_frames:
-            apply_adjustments(frame, sharpness, contrast, brightness)
+            apply_adjustments(frame, sharpness)
         out_video = work / "veloceai-enhanced.mp4"
         pattern = str(enhanced / "%08d_veloceai.png")
         if not (enhanced / "00000001_veloceai.png").exists():

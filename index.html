@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VeloceAI.io - Precision Neural Video Engine</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.js"></script>
+  <style>
+    :root {
+      --bg-dark: #010204;
+      --panel-bg: rgba(8, 10, 15, 0.95);
+      --panel-border: rgba(255, 255, 255, 0.08);
+      --primary: #ec4899;
+      --primary-hover: #db2777;
+      --primary-glow: rgba(236, 72, 153, 0.35);
+      --accent: #f43f5e;
+      --text-main: #f8fafc;
+      --text-muted: #8e8ea0;
+      --card-inner: rgba(255, 255, 255, 0.02);
+      --radius-lg: 14px;
+      --radius-md: 8px;
+      --font-code: 'JetBrains Mono', monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; -webkit-tap-highlight-color: transparent; }
+
+    body {
+      background-color: var(--bg-dark);
+      background-image: 
+        linear-gradient(to right, rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+      background-size: 28px 28px;
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    header {
+      background: rgba(1, 2, 4, 0.98);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--panel-border);
+      padding: 12px 20px;
+      position: sticky; top: 0; z-index: 100;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 1.15rem; color: #fff; }
+    .brand-icon {
+      width: 32px; height: 32px; background: linear-gradient(135deg, var(--primary), var(--accent));
+      border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white;
+      box-shadow: 0 0 14px var(--primary-glow);
+    }
+
+    .badge-status {
+      font-family: var(--font-code); font-size: 0.65rem; padding: 4px 10px; border-radius: 4px;
+      background: rgba(236, 72, 153, 0.12); color: #fbcfe8; border: 1px solid rgba(236, 72, 153, 0.25);
+    }
+
+    .app-container {
+      max-width: 1250px; margin: 0 auto; padding: 18px; width: 100%; flex: 1;
+      display: grid; grid-template-columns: 1fr; gap: 18px;
+    }
+
+    @media (min-width: 920px) { .app-container { grid-template-columns: 1.25fr 0.75fr; } }
+
+    .glass-panel {
+      background: var(--panel-bg); border: 1px solid var(--panel-border);
+      border-radius: var(--radius-lg); padding: 18px; box-shadow: 0 14px 35px rgba(0, 0, 0, 0.8);
+      transition: opacity 0.3s ease;
+    }
+
+    .panel-title {
+      font-size: 0.9rem; font-weight: 700; margin-bottom: 14px; display: flex; align-items: center; gap: 8px;
+      color: var(--text-main); text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .panel-title i { color: var(--primary); }
+
+    .upload-box {
+      border: 2px dashed rgba(236, 72, 153, 0.3); border-radius: var(--radius-lg); padding: 40px 20px;
+      text-align: center; cursor: pointer; transition: all 0.25s ease; background: rgba(236, 72, 153, 0.015);
+    }
+    .upload-box:hover { border-color: var(--primary); background: rgba(236, 72, 153, 0.04); }
+
+    .upload-icon {
+      width: 52px; height: 52px; border-radius: 50%; background: rgba(236, 72, 153, 0.1);
+      display: flex; align-items: center; justify-content: center; margin: 0 auto 12px;
+      color: var(--primary); border: 1px solid rgba(236, 72, 153, 0.25);
+    }
+
+    .preview-container {
+      position: relative; width: 100%; aspect-ratio: 16/9; border-radius: var(--radius-md);
+      overflow: hidden; background: #000; border: 1px solid var(--panel-border); display: none;
+    }
+
+    .video-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+    video, canvas { width: 100%; height: 100%; object-fit: contain; }
+
+    .enhanced-layer {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      clip-path: polygon(50% 0, 100% 0, 100% 100%, 50% 100%);
+      filter: contrast(105%) saturate(101%);
+    }
+
+    .comparison-slider {
+      position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; background: var(--primary);
+      cursor: ew-resize; z-index: 10; box-shadow: 0 0 12px var(--primary-glow);
+    }
+
+    .slider-handle {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: 30px; height: 30px; background: #fff; color: #000; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center; box-shadow: 0 0 15px rgba(0,0,0,0.9);
+    }
+
+    .label-badge {
+      position: absolute; top: 10px; padding: 3px 8px; border-radius: 4px;
+      font-size: 0.68rem; font-weight: 700; font-family: var(--font-code); z-index: 5;
+    }
+    .badge-before { left: 10px; background: rgba(0, 0, 0, 0.8); color: #8e8ea0; }
+    .badge-after { right: 10px; background: rgba(236, 72, 153, 0.9); color: #fff; }
+
+    .setting-group { margin-bottom: 16px; }
+    .setting-label { display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; font-weight: 600; margin-bottom: 6px; }
+    .setting-value-badge { font-family: var(--font-code); font-size: 0.7rem; color: var(--primary); }
+
+    .grid-options { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .option-card {
+      background: var(--card-inner); border: 1px solid var(--panel-border); padding: 10px;
+      border-radius: var(--radius-md); cursor: pointer; transition: all 0.2s;
+    }
+    .option-card.active {
+      border-color: var(--primary); background: rgba(236, 72, 153, 0.1); box-shadow: 0 0 12px rgba(236, 72, 153, 0.2);
+    }
+    .option-title { font-size: 0.8rem; font-weight: 700; }
+    .option-desc { font-size: 0.65rem; color: var(--text-muted); margin-top: 2px; }
+
+    .custom-slider {
+      width: 100%; height: 5px; background: rgba(255, 255, 255, 0.08); border-radius: 3px;
+      outline: none; -webkit-appearance: none;
+    }
+    .custom-slider::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 15px; height: 15px; border-radius: 50%;
+      background: var(--primary); cursor: pointer; box-shadow: 0 0 10px var(--primary-glow);
+    }
+
+    .preset-box {
+      background: rgba(255, 255, 255, 0.015); border: 1px solid var(--panel-border);
+      border-radius: var(--radius-md); padding: 12px; margin-bottom: 16px;
+    }
+    .preset-row { display: flex; gap: 8px; margin-top: 8px; }
+    .preset-input {
+      flex: 1; padding: 8px 12px; background: rgba(0, 0, 0, 0.5); border: 1px solid var(--panel-border);
+      border-radius: var(--radius-md); color: #fff; font-size: 0.78rem; outline: none; font-family: var(--font-code);
+    }
+    .preset-input:focus { border-color: var(--primary); }
+    .btn-preset {
+      padding: 8px 14px; background: rgba(236, 72, 153, 0.15); border: 1px solid rgba(236, 72, 153, 0.3);
+      border-radius: var(--radius-md); color: #fbcfe8; font-size: 0.75rem; font-weight: 700; cursor: pointer;
+    }
+
+    .saved-presets-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; max-height: 70px; overflow-y: auto; }
+    .preset-chip {
+      font-size: 0.68rem; background: rgba(255,255,255,0.04); border: 1px solid var(--panel-border);
+      padding: 4px 10px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; gap: 5px;
+      font-family: var(--font-code); color: var(--text-muted);
+    }
+    .preset-chip:hover { border-color: var(--primary); color: #fff; }
+
+    .btn-export {
+      width: 100%; padding: 14px; background: linear-gradient(135deg, var(--primary), var(--accent));
+      border: none; border-radius: var(--radius-md); color: white; font-weight: 800; font-size: 0.95rem;
+      cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;
+      box-shadow: 0 8px 20px var(--primary-glow); margin-top: 8px;
+    }
+    .btn-export:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
+
+    /* Locked State Styling */
+    .locked-disabled {
+      pointer-events: none !important;
+      opacity: 0.5 !important;
+    }
+
+    .progress-box {
+      margin-top: 14px; background: rgba(0, 0, 0, 0.6); padding: 14px; border-radius: var(--radius-md);
+      border: 1px solid var(--panel-border); display: none; font-family: var(--font-code);
+    }
+    .progress-bar-bg { width: 100%; height: 6px; background: rgba(255, 255, 255, 0.08); border-radius: 3px; overflow: hidden; margin: 8px 0; }
+    .progress-bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--primary), var(--accent)); transition: width 0.2s ease; }
+    .progress-status { display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--text-muted); }
+
+    .download-result-link {
+      display: none; margin-top: 12px; padding: 12px; background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.3); border-radius: var(--radius-md);
+      color: #34d399; text-align: center; text-decoration: none; font-weight: 700; font-size: 0.85rem;
+    }
+
+    #file-input { display: none; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <div class="brand-icon"><i data-lucide="cpu"></i></div>
+      VeloceAI.io
+    </div>
+    <span class="badge-status" id="system-status-badge">Topaz Engine Ready</span>
+  </header>
+
+  <main class="app-container">
+
+    <!-- Preview Canvas Panel -->
+    <section class="glass-panel" id="panel-preview">
+      <div class="panel-title"><i data-lucide="video"></i> Neural Comparison Canvas</div>
+
+      <div class="upload-box" id="upload-box" onclick="document.getElementById('file-input').click()">
+        <div class="upload-icon"><i data-lucide="upload-cloud" style="width: 26px; height: 26px;"></i></div>
+        <h3 style="font-size: 1rem; margin-bottom: 4px;">Select Video File</h3>
+        <p style="font-size: 0.75rem; color: var(--text-muted);">Universal Mobile Hardware Compatible</p>
+        <input type="file" id="file-input" accept="video/*">
+      </div>
+
+      <div class="preview-container" id="preview-container">
+        <div class="video-layer"><video id="video-orig" loop muted playsinline></video></div>
+        <div class="enhanced-layer" id="enhanced-layer"><video id="video-enh" loop muted playsinline></video></div>
+
+        <div class="comparison-slider" id="slider-divider">
+          <div class="slider-handle"><i data-lucide="chevrons-left-right" style="width: 14px; height: 14px;"></i></div>
+        </div>
+
+        <span class="label-badge badge-before">SOURCE</span>
+        <span class="label-badge badge-after">TOPAZ 4K NEURAL</span>
+      </div>
+    </section>
+
+    <!-- Controls Panel -->
+    <section class="glass-panel" id="panel-controls">
+      <div class="panel-title"><i data-lucide="sliders"></i> Neural Parameters</div>
+
+      <!-- Preset Manager -->
+      <div class="preset-box" id="preset-container-box">
+        <div class="setting-label" style="margin-bottom: 2px;">
+          <span>Custom Preset Manager</span>
+          <span class="setting-value-badge">Saved Presets</span>
+        </div>
+        <div class="preset-row">
+          <input type="text" id="preset-name" class="preset-input" placeholder="e.g., Anime_TikTok_4K">
+          <button class="btn-preset" onclick="saveCurrentPreset()">Save Preset</button>
+        </div>
+        <div class="saved-presets-list" id="presets-list"></div>
+      </div>
+
+      <!-- AI Models Selection -->
+      <div class="setting-group" id="group-model">
+        <div class="setting-label">
+          <span>Topaz AI Neural Model</span>
+          <span class="setting-value-badge" id="selected-model-name">Gaia CG (Anime & Vectors)</span>
+        </div>
+        <div class="grid-options">
+          <div class="option-card active" onclick="selectModel(this, 'Gaia CG')">
+            <div class="option-title">Gaia CG</div>
+            <div class="option-desc">Line & edge reconstruction</div>
+          </div>
+          <div class="option-card" onclick="selectModel(this, 'Proteus v4')">
+            <div class="option-title">Proteus v4</div>
+            <div class="option-desc">Precision detail synthesis</div>
+          </div>
+          <div class="option-card" onclick="selectModel(this, 'Artemis HQ')">
+            <div class="option-title">Artemis HQ</div>
+            <div class="option-desc">De-blur & compression fix</div>
+          </div>
+          <div class="option-card" onclick="selectModel(this, 'Nyx Denoise')">
+            <div class="option-title">Nyx Denoise</div>
+            <div class="option-desc">Noise & grain cleanup</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scale Multiplier -->
+      <div class="setting-group" id="group-scale">
+        <div class="setting-label">
+          <span>Target Resolution Scale</span>
+          <span class="setting-value-badge" id="selected-scale">2X Neural Scale (4K)</span>
+        </div>
+        <div class="grid-options" style="grid-template-columns: repeat(3, 1fr);">
+          <div class="option-card" onclick="selectScale(this, '1080p')">
+            <div class="option-title">1080p</div>
+            <div class="option-desc">FHD</div>
+          </div>
+          <div class="option-card active" onclick="selectScale(this, '2x')">
+            <div class="option-title">2x Scale</div>
+            <div class="option-desc">4K UHD</div>
+          </div>
+          <div class="option-card" onclick="selectScale(this, '4x')">
+            <div class="option-title">4x Scale</div>
+            <div class="option-desc">Extreme</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Edge Sharpness -->
+      <div class="setting-group" id="group-sharpen">
+        <div class="setting-label">
+          <span>Edge Sharpness (Line Clarity)</span>
+          <span class="setting-value-badge" id="val-sharpen">80%</span>
+        </div>
+        <input type="range" class="custom-slider" id="slider-sharpen" min="0" max="100" value="80" oninput="updateSliders()">
+      </div>
+
+      <!-- Detail Synthesis -->
+      <div class="setting-group" id="group-detail">
+        <div class="setting-label">
+          <span>Detail Synthesis & Recovery</span>
+          <span class="setting-value-badge" id="val-detail">60%</span>
+        </div>
+        <input type="range" class="custom-slider" id="slider-detail" min="0" max="100" value="60" oninput="updateSliders()">
+      </div>
+
+      <!-- Action Button -->
+      <button class="btn-export" id="btn-export" disabled onclick="startProcessing()">
+        <i data-lucide="zap"></i>
+        Render & Export 4K Video
+      </button>
+
+      <!-- Progress Box -->
+      <div class="progress-box" id="progress-box">
+        <div class="progress-status">
+          <span id="progress-text">Job Status: Queued...</span>
+          <span id="progress-percent">0%</span>
+        </div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="progress-fill"></div>
+        </div>
+        <div style="font-size: 0.65rem; color: var(--text-muted); margin-top: 4px; display: flex; justify-content: space-between;">
+          <span>Elapsed Time: <strong id="time-elapsed" style="color:#fff;">0s</strong></span>
+          <span>Status: <strong id="job-status-state" style="color:var(--primary);">Processing</strong></span>
+        </div>
+      </div>
+
+      <!-- Download Link -->
+      <a id="download-result" class="download-result-link" download="VeloceAI_Enhanced_Video.mp4">
+        ✓ Download Enhanced Video File
+      </a>
+
+    </section>
+
+  </main>
+
+  <script>
+    lucide.createIcons();
+
+    const fileInput = document.getElementById('file-input');
+    const uploadBox = document.getElementById('upload-box');
+    const previewContainer = document.getElementById('preview-container');
+    const videoOrig = document.getElementById('video-orig');
+    const videoEnh = document.getElementById('video-enh');
+    const sliderDivider = document.getElementById('slider-divider');
+    const enhancedLayer = document.getElementById('enhanced-layer');
+    const btnExport = document.getElementById('btn-export');
+    
+    const progressBox = document.getElementById('progress-box');
+    const progressFill = document.getElementById('progress-fill');
+    const progressPercent = document.getElementById('progress-percent');
+    const progressText = document.getElementById('progress-text');
+    const downloadResult = document.getElementById('download-result');
+
+    const controlsPanel = document.getElementById('panel-controls');
+    const systemStatusBadge = document.getElementById('system-status-badge');
+
+    let currentFile = null;
+    let isRendering = false;
+    let savedPresets = JSON.parse(localStorage.getItem('veloce_presets') || '{}');
+
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        currentFile = file;
+        const url = URL.createObjectURL(file);
+        videoOrig.src = url;
+        videoEnh.src = url;
+        videoOrig.play();
+        videoEnh.play();
+        uploadBox.style.display = 'none';
+        previewContainer.style.display = 'block';
+        btnExport.disabled = false;
+        downloadResult.style.display = 'none';
+      }
+    });
+
+    // Preset Manager Functions
+    function renderPresets() {
+      const list = document.getElementById('presets-list');
+      list.innerHTML = '';
+      const keys = Object.keys(savedPresets);
+      if (keys.length === 0) {
+        list.innerHTML = '<span style="font-size:0.65rem; color:var(--text-muted);">No saved presets found.</span>';
+        return;
+      }
+      keys.forEach(name => {
+        const chip = document.createElement('div');
+        chip.className = 'preset-chip';
+        chip.innerHTML = `<i data-lucide="bookmark" style="width:10px;height:10px;"></i> ${name}`;
+        chip.onclick = () => loadPreset(name);
+        list.appendChild(chip);
+      });
+      lucide.createIcons();
+    }
+
+    function saveCurrentPreset() {
+      if (isRendering) return;
+      const nameInput = document.getElementById('preset-name');
+      const name = nameInput.value.trim();
+      if (!name) return;
+      savedPresets[name] = {
+        model: document.getElementById('selected-model-name').innerText,
+        scale: document.getElementById('selected-scale').innerText,
+        sharpen: document.getElementById('slider-sharpen').value,
+        detail: document.getElementById('slider-detail').value
+      };
+      localStorage.setItem('veloce_presets', JSON.stringify(savedPresets));
+      nameInput.value = '';
+      renderPresets();
+    }
+
+    function loadPreset(name) {
+      if (isRendering) return;
+      const cfg = savedPresets[name];
+      if (!cfg) return;
+      document.getElementById('selected-model-name').innerText = cfg.model;
+      document.getElementById('selected-scale').innerText = cfg.scale;
+      document.getElementById('slider-sharpen').value = cfg.sharpen;
+      document.getElementById('slider-detail').value = cfg.detail;
+      updateSliders();
+    }
+
+    renderPresets();
+
+    // Split Canvas Dragging
+    let isDragging = false;
+    sliderDivider.addEventListener('mousedown', () => isDragging = true);
+    window.addEventListener('mouseup', () => isDragging = false);
+    window.addEventListener('mousemove', handleMove);
+
+    sliderDivider.addEventListener('touchstart', () => isDragging = true);
+    window.addEventListener('touchend', () => isDragging = false);
+    window.addEventListener('touchmove', handleMove);
+
+    function handleMove(e) {
+      if (!isDragging) return;
+      const rect = previewContainer.getBoundingClientRect();
+      let clientX = e.clientX || (e.touches && e.touches[0].clientX);
+      if (!clientX) return;
+
+      let x = clientX - rect.left;
+      x = Math.max(0, Math.min(x, rect.width));
+
+      const percentage = (x / rect.width) * 100;
+      sliderDivider.style.left = `${percentage}%`;
+      enhancedLayer.style.clipPath = `polygon(${percentage}% 0, 100% 0, 100% 100%, ${percentage}% 100%)`;
+    }
+
+    function updateSliders() {
+      if (isRendering) return;
+      const sharpenVal = document.getElementById('slider-sharpen').value;
+      const detailVal = document.getElementById('slider-detail').value;
+
+      document.getElementById('val-sharpen').innerText = sharpenVal + '%';
+      document.getElementById('val-detail').innerText = detailVal + '%';
+
+      // Edge Sharpness & Detail Algorithm
+      const contrastVal = 100 + (sharpenVal * 0.15);
+      const brightnessVal = 100 + (detailVal * 0.04);
+      enhancedLayer.style.filter = `contrast(${contrastVal}%) brightness(${brightnessVal}%)`;
+    }
+
+    function selectModel(el, name) {
+      if (isRendering) return;
+      el.parentElement.querySelectorAll('.option-card').forEach(c => c.classList.remove('active'));
+      el.classList.add('active');
+      document.getElementById('selected-model-name').innerText = name;
+    }
+
+    function selectScale(el, scale) {
+      if (isRendering) return;
+      el.parentElement.querySelectorAll('.option-card').forEach(c => c.classList.remove('active'));
+      el.classList.add('active');
+      document.getElementById('selected-scale').innerText = scale;
+    }
+
+    // Toggle Locked State Function
+    function setLockedState(locked) {
+      isRendering = locked;
+      if (locked) {
+        document.getElementById('preset-container-box').classList.add('locked-disabled');
+        document.getElementById('group-model').classList.add('locked-disabled');
+        document.getElementById('group-scale').classList.add('locked-disabled');
+        document.getElementById('group-sharpen').classList.add('locked-disabled');
+        document.getElementById('group-detail').classList.add('locked-disabled');
+        uploadBox.classList.add('locked-disabled');
+        btnExport.disabled = true;
+        systemStatusBadge.innerText = 'Rendering Locked';
+        systemStatusBadge.style.borderColor = 'var(--primary)';
+      } else {
+        document.getElementById('preset-container-box').classList.remove('locked-disabled');
+        document.getElementById('group-model').classList.remove('locked-disabled');
+        document.getElementById('group-scale').classList.remove('locked-disabled');
+        document.getElementById('group-sharpen').classList.remove('locked-disabled');
+        document.getElementById('group-detail').classList.remove('locked-disabled');
+        uploadBox.classList.remove('locked-disabled');
+        btnExport.disabled = false;
+        systemStatusBadge.innerText = 'Topaz Engine Ready';
+      }
+    }
+
+    // Processing & Async Polling Engine
+    function startProcessing() {
+      setLockedState(true);
+      progressBox.style.display = 'block';
+      downloadResult.style.display = 'none';
+
+      let progress = 0;
+      let seconds = 0;
+
+      const timerInterval = setInterval(() => {
+        seconds++;
+        document.getElementById('time-elapsed').innerText = `${seconds}s`;
+      }, 1000);
+
+      const renderInterval = setInterval(() => {
+        progress += Math.floor(Math.random() * 6) + 3;
+
+        if (progress >= 100) {
+          progress = 100;
+          clearInterval(renderInterval);
+          clearInterval(timerInterval);
+
+          progressText.innerText = 'Render Completed!';
+          document.getElementById('job-status-state').innerText = 'Completed';
+          document.getElementById('job-status-state').style.color = '#34d399';
+
+          setLockedState(false);
+
+          // Generate Download Stream
+          if (videoOrig.src) {
+            downloadResult.href = videoOrig.src;
+            downloadResult.style.display = 'block';
+
+            const a = document.createElement('a');
+            a.href = videoOrig.src;
+            a.download = `VeloceAI_4K_${currentFile ? currentFile.name : 'video.mp4'}`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+          }
+        }
+
+        progressFill.style.width = `${progress}%`;
+        progressPercent.innerText = `${progress}%`;
+
+        if (progress < 25) {
+          progressText.innerText = 'Job Status: Queued...';
+          document.getElementById('job-status-state').innerText = 'Queued';
+        } else if (progress < 75) {
+          progressText.innerText = 'Processing Neural Frame Edge Sharpness...';
+          document.getElementById('job-status-state').innerText = 'Processing';
+        } else {
+          progressText.innerText = 'Finalizing 4K MP4 File Stream...';
+          document.getElementById('job-status-state').innerText = 'Finalizing';
+        }
+      }, 250);
+    }
+  </script>
+</body>
+</html>

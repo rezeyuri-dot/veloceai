@@ -2,6 +2,7 @@
 import subprocess, tempfile
 from functools import wraps
 from pathlib import Path
+from threading import Lock
 import numpy as np
 import torch
 from PIL import Image
@@ -17,6 +18,7 @@ app = FastAPI(title="VeloceAI Restoration Engine", version="2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False,
                    allow_methods=["GET","POST","OPTIONS"], allow_headers=["*"])
 descriptor = None
+MODEL_LOCK = Lock()
 progress_state = {"percent": 0, "stage": "idle", "busy": False}
 
 def set_progress(percent, stage):
@@ -80,11 +82,17 @@ def preview_video(file: UploadFile = File(...)):
 
 def load_model():
     global descriptor
-    if descriptor is None:
-        if not MODEL.is_file():
-            raise RuntimeError("Model file missing: " + str(MODEL))
-        descriptor = ModelLoader().load_from_file(MODEL)
-        descriptor.model.eval().to(DEVICE)
+    if descriptor is not None:
+        return descriptor
+    # /health and an enhancement request may arrive together on a cold start.
+    # Load the model once to avoid duplicate memory-heavy initializations.
+    with MODEL_LOCK:
+        if descriptor is None:
+            if not MODEL.is_file():
+                raise RuntimeError("Model file missing: " + str(MODEL))
+            loaded = ModelLoader().load_from_file(MODEL)
+            loaded.model.eval().to(DEVICE)
+            descriptor = loaded
     return descriptor
 
 @app.get("/health")

@@ -27,7 +27,7 @@
 <div class="control"><label for="sharp">Sharpness <span id="sharpVal">20</span></label><input id="sharp" type="range" min="0" max="100" value="20"></div>
 <div class="control"><label for="contrast">Contrast <span id="contrastVal">105</span>%</label><input id="contrast" type="range" min="80" max="140" value="105"></div>
 <div class="control"><label for="brightness">Brightness <span id="brightVal">100</span>%</label><input id="brightness" type="range" min="80" max="120" value="100"></div>
-<div class="control"><label for="scale">Export scale</label><select id="scale"><option value="1">Original size</option><option value="1.5">1.5×</option><option value="2">2× (larger file)</option></select></div>
+<div class="control"><label for="scale">AI upscale</label><select id="scale"><option value="2">AI upscale 2×</option><option value="4">AI upscale 4× (larger file)</option></select></div>
 </div>
 <div class="preview" id="enhancedPreview">Enhanced preview appears here</div>
 <div class="actions"><button class="primary" id="processBtn" disabled>Apply adjustments</button><button id="downloadBtn" disabled>Download result</button></div>
@@ -62,7 +62,7 @@ async function processWithColab(api){
   catch(e) { setStatus('Enter a valid Colab API URL, including https://'); return; }
   const s=settings(); const body=new FormData(); body.append('file',file,file.name);
   endpoint.pathname=(mode==='image'?'/api/enhance/image':'/api/enhance/video');
-  endpoint.searchParams.set('scale',String(s.scale>=4?4:2));
+  endpoint.searchParams.set('scale',String(s.scale===4?4:2));
   $('processBtn').disabled=true;$('downloadBtn').disabled=true;
   setStatus('Uploading to Google Colab. Keep the Colab session running…');
   try {

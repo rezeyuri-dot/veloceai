@@ -25,6 +25,39 @@ def set_progress(percent, stage):
 def get_progress():
     return dict(progress_state)
 
+
+@app.post("/api/preview/video")
+async def preview_video(file: UploadFile = File(...)):
+    """Extract a browser-friendly PNG thumbnail for videos whose codecs cannot preview locally."""
+    suffix = Path(file.filename or "video.mp4").suffix.lower()
+    if suffix not in (".mp4", ".mov", ".mkv", ".webm"):
+        raise HTTPException(400, "Unsupported video format.")
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "The uploaded video is empty.")
+    if len(data) > 150 * 1024 * 1024:
+        raise HTTPException(413, "Video limit is 150 MB.")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        src = root / ("preview" + suffix)
+        thumb = root / "thumbnail.png"
+        src.write_bytes(data)
+        cmd = [
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-i", str(src),
+            "-vf", "scale=w='min(960,iw)':h=-2",
+            "-frames:v", "1", "-an", str(thumb)
+        ]
+        try:
+            extracted = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            raise HTTPException(408, "Video preview extraction timed out.")
+        if extracted.returncode != 0 or not thumb.is_file() or thumb.stat().st_size == 0:
+            detail = extracted.stderr[-500:] if extracted.stderr else "No video frame could be extracted."
+            raise HTTPException(400, "Could not create video preview: " + detail)
+        return Response(thumb.read_bytes(), media_type="image/png",
+                        headers={"Cache-Control": "no-store"})
+
 def load_model():
     global descriptor
     if descriptor is None:

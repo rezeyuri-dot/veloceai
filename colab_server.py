@@ -83,8 +83,7 @@ async def enhance_image(file: UploadFile=File(...), scale:int=2, denoise:int=25,
           headers={"Content-Disposition":'attachment; filename="VeloceAI-Restored.png"'})
 
 @app.post("/api/enhance/video")
-async def enhance_video(file:UploadFile=File(...),scale:int=2,denoise:int=25,
-                        sharpness:float=1.2,crf:int=17):
+async def enhance_video(file:UploadFile=File(...),scale:int=2,denoise:int=25,\n                        sharpness:float=1.2,crf:int=17,crop_black_bars:bool=False):
     validate(scale,sharpness,denoise,crf)
     suffix=Path(file.filename or "video.mp4").suffix.lower()
     if suffix not in (".mp4",".mov",".mkv",".webm"): raise HTTPException(400,"Unsupported video format.")
@@ -100,7 +99,18 @@ async def enhance_video(file:UploadFile=File(...),scale:int=2,denoise:int=25,
         if duration>45: raise HTTPException(413,"Video limit is 45 seconds.")
         fp=subprocess.run(["ffprobe","-v","error","-select_streams","v:0","-show_entries","stream=avg_frame_rate","-of","csv=p=0",str(src)],capture_output=True,text=True)
         fps=fp.stdout.strip() or "30/1"
-        ex=subprocess.run(["ffmpeg","-y","-v","error","-i",str(src),"-map","0:v:0","-vsync","0",str(frames/"%08d.png")],capture_output=True,text=True)
+        crop_filter = None
+        if crop_black_bars:
+            detect=subprocess.run(["ffmpeg","-hide_banner","-i",str(src),"-vf","cropdetect=24:16:0","-frames:v","120","-f","null","-"],capture_output=True,text=True)
+            import re
+            crops=re.findall(r"crop=(\\d+:\\d+:\\d+:\\d+)",detect.stderr)
+            if crops:
+                crop_filter=crops[-1]
+        extract=["ffmpeg","-y","-v","error","-i",str(src)]
+        if crop_filter:
+            extract += ["-vf",f"crop={crop_filter}"]
+        extract += ["-map","0:v:0","-vsync","0",str(frames/"%08d.png")]
+        ex=subprocess.run(extract,capture_output=True,text=True)
         if ex.returncode: raise HTTPException(400,"Frame extraction failed: "+ex.stderr[-800:])
         inputs=sorted(frames.glob("*.png"))
         if not inputs: raise HTTPException(400,"No video frames found.")

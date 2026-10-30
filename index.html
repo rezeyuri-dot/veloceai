@@ -7,7 +7,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>VeloceAI — AI Image & Video Restoration</title>
+<title>VeloceAI Studio — AI Image & Video Restoration</title>
 <style>
 :root{color-scheme:dark;--bg:#090a10;--panel:#131520;--panel2:#0e1018;--line:#292d3a;--muted:#a2a7b8;--pink:#ed4b9b;--pink2:#f879bb;--white:#f7f8fc;--green:#8fe3b1;--radius:19px}
 *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:radial-gradient(ellipse at 50% -20%,#30203a 0,transparent 48%),var(--bg);color:var(--white);font:15px/1.65 Inter,system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
@@ -15,7 +15,7 @@ button,input,select{font:inherit;color:inherit}button{cursor:pointer}.wrap{max-w
 .hero{text-align:center;padding:38px 0 25px}.eyebrow{font-size:11px;letter-spacing:1.8px;color:var(--pink2);font-weight:850;text-transform:uppercase}.hero h1{font-size:clamp(30px,7vw,52px);line-height:1.15;letter-spacing:-1.4px;margin:10px 0}.hero p{color:var(--muted);max-width:650px;margin:0 auto}.steps{display:flex;justify-content:center;gap:9px;flex-wrap:wrap;margin-top:18px}.steps span{font-size:12px;color:#d6d8e2;border:1px solid var(--line);border-radius:99px;padding:5px 10px;background:#11131b}
 .layout{display:grid;grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr);gap:16px;align-items:start}.panel{background:linear-gradient(145deg,#171925,#11131b);border:1px solid var(--line);border-radius:var(--radius);padding:19px;min-width:0;box-shadow:0 12px 40px #00000014}.panel h2{font-size:17px;margin:0 0 13px}.number{display:inline-grid;place-items:center;background:#3a1c32;color:#ffadd6;border:1px solid #683151;border-radius:8px;width:27px;height:27px;margin-right:7px;font-size:12px}
 .drop{border:1.5px dashed #585164;border-radius:15px;padding:25px 13px;text-align:center;background:#0d0f17;transition:border-color .2s,background .2s}.drop.drag{border-color:var(--pink);background:#211320}.uploadicon{width:44px;height:44px;margin:0 auto 8px;display:grid;place-items:center;border-radius:14px;background:#2a1726;color:#ffadd6;font-size:25px}.drop b{display:block;font-size:15px}.drop p{font-size:12px;color:var(--muted);margin:5px 0 10px}.pickbtn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:9px 16px;border-radius:10px;background:#2a1d2b;border:1px solid #633553;color:#ffd3e8;font-weight:750;cursor:pointer}.drop input{display:none}.limits{font-size:11px;color:var(--muted);margin-top:10px}.fileinfo{display:flex;align-items:center;justify-content:space-between;gap:10px;background:#0d0f17;border:1px solid var(--line);padding:10px 12px;border-radius:11px;margin-top:12px;font-size:12px}.fileinfo strong{overflow-wrap:anywhere}.linkbtn{border:0;background:none;color:#ffadd6;padding:2px 0;font-size:12px;white-space:nowrap}.preview{min-height:210px;background:#08090e;border:1px solid var(--line);border-radius:13px;margin-top:12px;display:flex;align-items:center;justify-content:center;overflow:hidden;color:#777d8e;text-align:center;padding:10px}.preview video,.preview img{display:block;max-width:100%;max-height:360px;object-fit:contain}.preview video{width:100%}.preview img{width:auto;height:auto}.empty{text-align:center;color:#777d8e;font-size:13px;padding:20px}.emptyicon{font-size:28px;margin-bottom:5px;opacity:.7}.helper{color:var(--muted);font-size:12px;margin:10px 0 0}
-.settings{display:grid;grid-template-columns:1fr 1fr;gap:10px}.setting{background:var(--panel2);border:1px solid #282b38;border-radius:12px;padding:11px;min-width:0}.setting label{display:flex;align-items:center;justify-content:space-between;gap:8px;color:#d6d8e2;font-size:12px;margin:0 0 7px}.setting strong{color:#ffafd6;font-size:12px;font-variant-numeric:tabular-nums}.setting select{width:100%;background:#0a0c13;border:1px solid #313545;border-radius:9px;padding:8px;font-size:13px;min-width:0}.hint{color:var(--muted);font-size:11px;margin:6px 0 0;line-height:1.5}.range{width:100%;accent-color:var(--pink);margin:5px 0 0;direction:ltr}.subhead{grid-column:1/-1;color:#f28cbe;font-size:10px;letter-spacing:1.2px;font-weight:850;margin:5px 0 -3px}.wide{grid-column:1/-1}.checkline{display:flex!important;justify-content:flex-start!important;align-items:center;gap:8px!important;margin:7px 0 0!important}.checkline input{accent-color:var(--pink);width:16px;height:16px}
+.settings{display:grid;grid-template-columns:1fr 1fr;gap:10px}.profile-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.profile-card{display:flex;flex-direction:column;gap:5px;align-items:flex-start;text-align:left;background:#0c0e15;border:1px solid #333747;border-radius:11px;padding:12px;min-height:82px}.profile-card b{font-size:12px;letter-spacing:1px;color:#f5f4f8}.profile-card span{font-size:11px;line-height:1.4;color:var(--muted)}.profile-card.active{border-color:var(--pink);background:#271526;box-shadow:inset 0 0 0 1px #ed4b9b33}.setting{background:var(--panel2);border:1px solid #282b38;border-radius:12px;padding:11px;min-width:0}.setting label{display:flex;align-items:center;justify-content:space-between;gap:8px;color:#d6d8e2;font-size:12px;margin:0 0 7px}.setting strong{color:#ffafd6;font-size:12px;font-variant-numeric:tabular-nums}.setting select{width:100%;background:#0a0c13;border:1px solid #313545;border-radius:9px;padding:8px;font-size:13px;min-width:0}.hint{color:var(--muted);font-size:11px;margin:6px 0 0;line-height:1.5}.range{width:100%;accent-color:var(--pink);margin:5px 0 0;direction:ltr}.subhead{grid-column:1/-1;color:#f28cbe;font-size:10px;letter-spacing:1.2px;font-weight:850;margin:5px 0 -3px}.wide{grid-column:1/-1}.checkline{display:flex!important;justify-content:flex-start!important;align-items:center;gap:8px!important;margin:7px 0 0!important}.checkline input{accent-color:var(--pink);width:16px;height:16px}
 .comparison{margin-top:16px}.comparegrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.comparecard{border:1px solid var(--line);background:#0b0d14;border-radius:14px;padding:10px;min-width:0}.caption{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:750;color:#dfe1ea;margin:0 0 8px}.caption i{display:inline-block;width:7px;height:7px;border-radius:50%;background:#777d8e}.caption.result i{background:var(--green)}.comparecard .preview{margin:0;min-height:170px;padding:6px}.comparecard .preview video{max-height:330px}.comparecard .preview img{max-height:330px}
 .message{color:var(--muted);font-size:12px;min-height:22px;margin-top:10px;overflow-wrap:anywhere}.progress{height:7px;background:#252836;border-radius:10px;overflow:hidden;margin-top:7px}.progress span{display:block;height:100%;width:0;background:linear-gradient(90deg,#d63c8a,#ff96c7);transition:width .35s;position:relative}.progress.indeterminate span{width:35%!important;animation:progress-flow 1.05s ease-in-out infinite}.progress.working span:after{content:"";position:absolute;top:0;bottom:0;left:0;width:30%;background:linear-gradient(90deg,transparent,#ffffff88,transparent);animation:progress-shimmer 1.1s ease-in-out infinite}@keyframes progress-flow{from{transform:translateX(-115%)}to{transform:translateX(290%)}}@keyframes progress-shimmer{from{transform:translateX(-120%)}to{transform:translateX(380%)}}.progressmeta{display:flex;justify-content:space-between;gap:10px;margin-top:7px;color:var(--muted);font-size:11px}.progressmeta strong{color:#ffd0e5;font-variant-numeric:tabular-nums}.actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:12px}.btn{border:1px solid var(--line);background:#202331;border-radius:10px;padding:10px 14px;font-weight:700}.btn.primary{background:var(--pink);border-color:var(--pink);color:#210c19}.btn:disabled{opacity:.38;cursor:not-allowed}.resultdownload{display:flex;justify-content:center;margin-top:10px}.resultdownload .btn{width:100%;min-height:44px}.profile-note{border:1px solid #2b2d3a;background:#0d0f17;border-radius:11px;padding:10px 11px;margin-top:10px;color:var(--muted);font-size:11px}.profile-note b{color:#e3e4ec}.footer{text-align:center;color:#777d8e;font-size:11px;margin:20px 0 0}.stickybar{position:fixed;z-index:30;left:0;right:0;bottom:0;padding:10px max(14px,calc((100vw - 1050px)/2));padding-bottom:max(10px,env(safe-area-inset-bottom));background:rgba(9,10,16,.94);border-top:1px solid var(--line);backdrop-filter:blur(16px);display:flex;align-items:center;justify-content:space-between;gap:12px}.stickytext{min-width:0;font-size:11px;color:var(--muted);line-height:1.5}.stickytext b{display:block;font-size:12px;color:#f0dce7}.stickybtn{min-width:210px;min-height:46px;border:0;border-radius:12px;background:var(--pink);color:#210c19;font-weight:900;padding:10px 16px;box-shadow:0 5px 22px #ed4b9b25}.stickybtn:disabled{opacity:.4;box-shadow:none;cursor:not-allowed}.busy .stickybtn{background:#a93576}
 .hidden{display:none!important}
@@ -26,7 +26,7 @@ button,input,select{font:inherit;color:inherit}button{cursor:pointer}.wrap{max-w
 <body>
 <main class="wrap">
 <header class="top">
-  <div class="logo">Veloce<span>AI</span></div>
+  <div class="logo">Veloce<span>AI</span> Studio</div>
   <div class="status" aria-live="polite"><span class="dot" id="engineDot"></span><span id="engineState">Connecting to AI engine…</span></div>
 </header>
 <section class="hero">
@@ -55,8 +55,11 @@ button,input,select{font:inherit;color:inherit}button{cursor:pointer}.wrap{max-w
   <section class="panel">
     <h2><span class="number">02</span> Enhancement settings</h2>
     <div class="settings">
-      <div class="setting"><label for="scale">Upscale factor</label><select id="scale"><option value="2">2× · Balanced</option><option value="4">4× · Maximum resolution</option></select><p class="hint">4× can take longer to process.</p></div>
-      <div class="setting"><label for="profile">Content profile</label><select id="profile"><option value="anime" selected>Anime / animation</option><option value="general">General restoration</option><option value="real">Realistic footage</option></select><p class="hint">Adjusts how details and edges are refined.</p></div>
+      <div class="setting"><label for="scale">Upscale factor</label><select id="scale"><option value="1">1× · Restore at source size</option><option value="2" selected>2× · Balanced</option><option value="4">4× · Maximum resolution</option></select><p class="hint">Choose the output resolution multiplier.</p></div>
+      <div class="setting wide"><label>Content profile</label><div class="profile-grid" role="group" aria-label="Content profile">
+        <button class="profile-card active" type="button" data-profile="anime" aria-pressed="true"><b>ANIME</b><span>Anime, manga, cartoons and animation.</span></button>
+        <button class="profile-card" type="button" data-profile="general" aria-pressed="false"><b>GENERAL</b><span>Live action, photography, games and mixed footage.</span></button>
+      </div><select id="profile" class="hidden" aria-hidden="true" tabindex="-1"><option value="anime" selected>Anime</option><option value="general">General</option></select></div>
       <div class="subhead">Detail controls</div>
       <div class="setting"><label for="denoise">Noise reduction <strong id="denoiseV">0%</strong></label><input class="range" id="denoise" type="range" min="0" max="100" value="0"><p class="hint">Reduce grain and visual noise.</p></div>
       <div class="setting"><label for="sharp">Sharpening <strong id="sharpV">20%</strong></label><input class="range" id="sharp" type="range" min="0" max="100" value="20"><p class="hint">Increase perceived edge definition.</p></div>
@@ -64,8 +67,9 @@ button,input,select{font:inherit;color:inherit}button{cursor:pointer}.wrap{max-w
       <div class="setting"><label for="antiAlias">Edge smoothing <strong id="antiAliasV">0%</strong></label><input class="range" id="antiAlias" type="range" min="0" max="100" value="0"><p class="hint">Soften jagged edges; too much may blur detail.</p></div>
       <div class="setting"><label for="compression">Export quality</label><select id="compression"><option value="17">Very high</option><option value="19">High</option><option value="22">Smaller file</option></select><p class="hint">Higher quality usually means a larger video.</p></div>
       <div class="setting" id="cropSetting"><label class="checkline" for="cropBars"><input id="cropBars" type="checkbox"> Remove black bars (video)</label><p class="hint">Optional; crops detected letterbox or pillarbox bars.</p></div>
+      <div class="setting wide hidden" id="mobileSetting"><label class="checkline" for="mobileOptimize"><input id="mobileOptimize" type="checkbox"> Optimize for mobile playback</label><p class="hint">Uses a compatibility-focused H.264 profile, MP4 fast start, yuv420p video and AAC audio. Output resolution is not silently reduced.</p></div>
     </div>
-    <div class="profile-note"><b>Processing engine:</b> Real-ESRGAN with image post-processing. This is not the Topaz engine. Video export attempts to preserve audio and frame rate.</div>
+    <div class="profile-note"><b>Processing engine:</b> Real-ESRGAN x4plus with image post-processing. This is not the Topaz engine. Video export preserves source frame rate and includes the original audio track when present.</div>
     <div class="message" id="msg" role="status" aria-live="polite">Choose an image or video to get started.</div>
     <div id="progress" class="progress" aria-label="Processing progress"><span id="progressBar"></span></div>
     <div class="progressmeta"><span id="progressStage">Waiting to start</span><strong id="progressPercent">0%</strong></div>
@@ -151,6 +155,15 @@ async function health(){
   }catch(e){$('engineState').textContent='Engine disconnected';$('engineDot').className='dot bad';}
 }
 ['denoise','sharp','lineDetail','antiAlias'].forEach(id=>$(id).addEventListener('input',()=>$(id+'V').textContent=$(id).value+'%'));
+document.querySelectorAll('[data-profile]').forEach(button=>button.addEventListener('click',()=>{
+  if(busy)return;
+  $('profile').value=button.dataset.profile;
+  document.querySelectorAll('[data-profile]').forEach(card=>{
+    const active=card===button;
+    card.classList.toggle('active',active);
+    card.setAttribute('aria-pressed',String(active));
+  });
+}));
 
 function emptyBefore(text){
   $('before').innerHTML='<div class="empty"><div class="emptyicon">▣</div>'+text+'</div>';
@@ -311,7 +324,9 @@ function clearFile(){
   previewUrl=null;file=null;mode='';metadataValid=false;
   $('file').value='';$('fileInfo').classList.add('hidden');$('fileName').textContent='—';
   $('cropSetting').classList.remove('hidden');
-  $('uploadHelper').textContent='Tip: use the Anime profile for animation or Realistic for live-action footage.';
+  $('mobileSetting').classList.add('hidden');
+  $('mobileOptimize').checked=false;
+  $('uploadHelper').textContent='Choose ANIME for drawn content or GENERAL for live-action and mixed footage.';
   emptyBefore('Your media preview will appear here');resetResult();
   setProgress(0,'Waiting to start');msg('Choose an image or video to get started.');setBusy(false);
 }
@@ -336,6 +351,7 @@ $('file').addEventListener('change',()=>{
   setMediaPreview($('cmpBefore'),previewUrl,mode,file,file.name);
   $('cmpAfter').innerHTML='<div class="empty">Your enhanced result will appear here</div>';
   $('cropSetting').classList.toggle('hidden',mode!=='video');
+  $('mobileSetting').classList.toggle('hidden',mode!=='video');
   $('uploadHelper').textContent=mode==='video'
     ?'Video preview is available here and in the comparison section. Videos must be 45 seconds or shorter.'
     :'Image preview is available here and in the comparison section. Images must be 25 MB or smaller.';
@@ -385,7 +401,10 @@ $('run').onclick=async()=>{
   endpoint.searchParams.set('line_detail',$('lineDetail').value);
   endpoint.searchParams.set('anti_alias',$('antiAlias').value);
   endpoint.searchParams.set('crf',$('compression').value);
-  if(mode==='video')endpoint.searchParams.set('crop_black_bars',$('cropBars').checked?'true':'false');
+  if(mode==='video'){
+    endpoint.searchParams.set('crop_black_bars',$('cropBars').checked?'true':'false');
+    endpoint.searchParams.set('mobile_optimize',$('mobileOptimize').checked?'true':'false');
+  }
   const data=new FormData();data.append('file',file,uploadFilename(file,mode,file.name));
   resetResult();setBusy(true);setProgress(1,'Preparing upload');
   msg('Uploading media and starting AI processing. Keep the Colab session running.');

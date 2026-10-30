@@ -23,8 +23,17 @@ jobs:
       - name: Compile backend
         run: python -m py_compile colab_server.py
 
-      - name: Validate Colab notebook JSON
-        run: python -m json.tool VeloceAI_Colab.ipynb > /dev/null
+      - name: Validate Colab notebook JSON and launch-cell Python
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          notebook = json.loads(Path("VeloceAI_Colab.ipynb").read_text())
+          cells = [c for c in notebook["cells"] if c["cell_type"] == "code"]
+          assert len(cells) == 1, f"Expected one launch cell, found {len(cells)}"
+          compile("".join(cells[0]["source"]), "VeloceAI_Colab_cell.py", "exec")
+          print("Colab notebook JSON and Python syntax are valid.")
+          PY
 
       - name: Validate deployment files
         run: |
@@ -48,7 +57,7 @@ jobs:
           const duplicates = [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
           if (missing.length) throw new Error('Missing DOM IDs: ' + missing.join(', '));
           if (duplicates.length) throw new Error('Duplicate DOM IDs: ' + duplicates.join(', '));
-          if (!html.includes("location.hostname.endsWith('.hf.space')")) throw new Error('Hosted same-origin API routing missing');
+          if (!html.includes('const API_BASE=window.location.origin;')) throw new Error('Same-origin API routing missing');
           if (!match[1].includes("'/api/enhance/image'") || !match[1].includes("'/api/enhance/video'")) throw new Error('Image/video routes missing');
           console.log('Frontend JavaScript and DOM references are valid.');
           NODE

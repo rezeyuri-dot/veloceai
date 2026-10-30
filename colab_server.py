@@ -238,6 +238,14 @@ def enhance_video(file:UploadFile=File(...), scale:int=2, denoise:int=25,
         if duration>45: raise HTTPException(413,"Video limit is 45 seconds.")
         fp=subprocess.run(["ffprobe","-v","error","-select_streams","v:0","-show_entries","stream=avg_frame_rate","-of","csv=p=0",str(src)],capture_output=True,text=True)
         fps=fp.stdout.strip() or "30/1"
+        try:
+            fps_parts = fps.split("/", 1)
+            fps_value = float(fps_parts[0]) / (float(fps_parts[1]) if len(fps_parts) == 2 else 1.0)
+            if fps_value <= 0:
+                fps_value = 30.0
+        except (ValueError, ZeroDivisionError):
+            fps_value = 30.0
+        estimated_frames = max(1, int(duration * fps_value))
         crop_filter = None
         if crop_black_bars:
             set_progress(8, "Detecting black bars")
@@ -273,8 +281,9 @@ def enhance_video(file:UploadFile=File(...), scale:int=2, denoise:int=25,
             elif line.startswith("frame="):
                 try:
                     extracted_frames=max(0,int(line.split("=",1)[1]))
-                    set_progress(max(8,min(12,8+int(4*extracted_frames/max(duration*float(fps.split('/')[0]) if '/' not in fps else duration*max(float(fps.split('/')[0])/max(float(fps.split('/')[1]),0.001),1),1)))),
-                                 f"Extracting video frames · {extracted_frames} frames")
+                    extraction_ratio = min(1.0, extracted_frames / estimated_frames)
+                    set_progress(8 + int(4 * extraction_ratio),
+                                 f"Extracting video frames · {extracted_frames}/{estimated_frames}")
                 except (ValueError,ZeroDivisionError):
                     pass
         extract_code=ex.wait()

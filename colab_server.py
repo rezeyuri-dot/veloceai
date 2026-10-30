@@ -249,8 +249,10 @@ def enhance_frame(src: Path, dst: Path, scale: int, sharpness: float, denoise: i
         im = Image.fromarray(clean)
     arr = np.asarray(im).astype(np.float32) / 255.0
     x = torch.from_numpy(arr).permute(2,0,1).unsqueeze(0).to(DEVICE)
+    # Match the model's channels-last layout on CPU as well as CUDA to avoid
+    # repeated NCHW/NHWC conversions inside convolution layers.
+    x = x.contiguous(memory_format=torch.channels_last)
     if DEVICE == "cuda":
-        x = x.contiguous(memory_format=torch.channels_last)
         # FP16 autocast is supported by the CUDA conv layers in Real-ESRGAN
         # and reduces per-frame latency and VRAM use on Colab GPUs.
         with torch.autocast(device_type="cuda", dtype=torch.float16):

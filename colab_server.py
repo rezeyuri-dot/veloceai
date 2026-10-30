@@ -12,7 +12,7 @@ from threading import Lock, Thread
 import numpy as np
 import torch
 from PIL import Image
-from fastapi import FastAPI, UploadFile, File, Form, Body, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, Body, HTTPException, Request
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
@@ -30,7 +30,6 @@ ANIME_MODEL_URL = os.environ.get(
     "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth"
 )
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-# Avoid CPU thread oversubscription; OpenCV must not spawn another worker pool.
 if DEVICE == "cpu":
     torch.set_num_threads(max(1, min(4, os.cpu_count() or 2)))
     try:
@@ -85,17 +84,15 @@ MODEL_LOCK = Lock()
 PROCESS_LOCK = Lock()
 progress_state = {"percent": 0, "stage": "idle", "busy": False}
 
-# Chunked mobile uploads and background jobs avoid one long multipart tunnel request.
 UPLOAD_ROOT = Path(os.environ.get("VELOCEAI_UPLOAD_DIR", "/content/veloceai-uploads"))
 UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 UPLOADS = {}
 JOBS = {}
 JOB_LOCK = Lock()
-CHUNK_SIZE = 1024 * 1024
+CHUNK_SIZE = 512 * 1024
 
 def set_progress(percent, stage):
     progress_state.update({"percent": max(0, min(100, int(percent))), "stage": str(stage)})
-
 
 def track_progress(func):
     """Keep progress state recoverable when validation or processing fails."""
@@ -136,7 +133,6 @@ def home():
         },
     )
 
-
 @app.get("/progress")
 def get_progress():
     return dict(progress_state)
@@ -161,8 +157,6 @@ def upload_init(payload: dict = Body(...)):
     print(f"[VeloceAI chunk upload] started id={upload_id} kind={kind} size={size}", flush=True)
     return {"ok": True, "upload_id": upload_id, "chunk_size": CHUNK_SIZE}
 
-
-
 @app.delete("/api/upload/{upload_id}")
 def cancel_upload(upload_id: str):
     with JOB_LOCK:
@@ -171,9 +165,11 @@ def cancel_upload(upload_id: str):
         shutil.rmtree(state["folder"], ignore_errors=True)
     return {"ok": True}
 
-
 @app.post("/api/upload/chunk")
-def upload_chunk(upload_id: str = Form(...), index: int = Form(...), file: UploadFile = File(...)):
+async def upload_chunk(request: Request, upload_id: str, index: int):
+    """Receive one bounded raw-binary chunk without multipart parsing."""
+    if not re.fullmatch(r"[a-f0-9]{32}", upload_id or ""):
+        raise HTTPException(400, "Invalid upload session.")
     with JOB_LOCK:
         state = UPLOADS.get(upload_id)
     if not state:
@@ -181,16 +177,25 @@ def upload_chunk(upload_id: str = Form(...), index: int = Form(...), file: Uploa
     total_chunks = (state["size"] + state["chunk_size"] - 1) // state["chunk_size"]
     if index < 0 or index >= total_chunks:
         raise HTTPException(400, "Invalid upload chunk number.")
-    data = file.file.read()
     expected = min(state["chunk_size"], state["size"] - index * state["chunk_size"])
+    parts = []
+    received = 0
+    async for part in request.stream():
+        received += len(part)
+        if received > expected:
+            raise HTTPException(413, f"Chunk {index} exceeds its expected size of {expected} bytes.")
+        parts.append(part)
+    data = b"".join(parts)
     if len(data) != expected:
         raise HTTPException(400, f"Chunk {index} has {len(data)} bytes; expected {expected}.")
-    (state["folder"] / f"{index:06d}.part").write_bytes(data)
+    part_path = state["folder"] / f"{index:06d}.part"
+    temporary_path = state["folder"] / f"{index:06d}.part.tmp"
+    temporary_path.write_bytes(data)
+    temporary_path.replace(part_path)
     with JOB_LOCK:
         state["chunks"].add(index)
     print(f"[VeloceAI chunk upload] id={upload_id} chunk={index+1}/{total_chunks} bytes={len(data)}", flush=True)
-    return {"ok": True, "index": index}
-
+    return {"ok": True, "index": index, "received_bytes": len(data)}
 
 @app.post("/api/jobs/start")
 def start_job(payload: dict = Body(...)):
@@ -227,7 +232,6 @@ def start_job(payload: dict = Body(...)):
            daemon=True).start()
     print(f"[VeloceAI job] queued id={job_id} kind={state['kind']}", flush=True)
     return {"ok": True, "job_id": job_id}
-
 
 def _run_enhancement_job(job_id, kind, filename, source, folder, settings):
     with JOB_LOCK:
@@ -267,7 +271,6 @@ def _run_enhancement_job(job_id, kind, filename, source, folder, settings):
         progress_state.update({"percent": 0, "stage": "Failed: " + detail[:100], "busy": False})
         print(f"[VeloceAI job] failed id={job_id}: {detail}", flush=True)
 
-
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str):
     with JOB_LOCK:
@@ -280,7 +283,6 @@ def get_job(job_id: str):
         result["stage"] = progress_state.get("stage", result["stage"])
     return result
 
-
 @app.get("/api/jobs/{job_id}/result")
 def get_job_result(job_id: str):
     with JOB_LOCK:
@@ -292,8 +294,6 @@ def get_job_result(job_id: str):
         path, media_type, output_name = job["result"], job["media_type"], job["output_name"]
     return FileResponse(path, media_type=media_type, filename=output_name,
                         headers={"Cache-Control": "no-store"})
-
-
 
 @app.post("/api/preview/video")
 def preview_video(file: UploadFile = File(...)):
@@ -375,10 +375,8 @@ def warmup(profile: str = "anime"):
     except Exception as exc:
         raise HTTPException(503, "AI model warm-up failed: " + str(exc)) from exc
 
-
 @app.get("/health")
 def health():
-    # Liveness only: do not download/load the model during every page open.
     return {
         "ok": True,
         "engine": "Real-ESRGAN x4plus via Spandrel",
@@ -412,14 +410,10 @@ def enhance_frame(src: Path, dst: Path, scale: int, sharpness: float, denoise: i
                   profile: str = "general", line_detail: int = 0, anti_alias: int = 0):
     model = load_model(profile)
     im = Image.open(src).convert("RGB")
-    # For requested 2x output, feed half-size input to the native x4 model.
-    # This produces the requested dimensions directly and uses about 1/4
-    # the neural compute of x4-then-downsample (the old, unnecessarily slow path).
     original_size = im.size
     if scale == 2:
         work_size = (max(1, (im.width + 1) // 2), max(1, (im.height + 1) // 2))
         im = im.resize(work_size, Image.Resampling.LANCZOS)
-    # Denoise at working resolution before upscaling, never on the 4x output.
     if denoise:
         import cv2
         source = np.asarray(im)
@@ -430,22 +424,16 @@ def enhance_frame(src: Path, dst: Path, scale: int, sharpness: float, denoise: i
         im = Image.fromarray(clean)
     arr = np.asarray(im).astype(np.float32) / 255.0
     x = torch.from_numpy(arr).permute(2,0,1).unsqueeze(0).to(DEVICE)
-    # Match the model's channels-last layout on CPU as well as CUDA to avoid
-    # repeated NCHW/NHWC conversions inside convolution layers.
     x = x.contiguous(memory_format=torch.channels_last)
     if DEVICE == "cuda":
-        # FP16 autocast is supported by the CUDA conv layers in Real-ESRGAN
-        # and reduces per-frame latency and VRAM use on Colab GPUs.
         with torch.autocast(device_type="cuda", dtype=torch.float16):
             y = model.model(x).clamp(0,1)
     else:
         y = model.model(x).clamp(0,1)
-    # The 2x path is already at target dimensions because its input was halved above.
     out = (y.squeeze(0).permute(1,2,0).cpu().numpy()*255.0).round().clip(0,255).astype(np.uint8)
     result = Image.fromarray(out)
     if scale == 2 and result.size != (original_size[0] * 2, original_size[1] * 2):
         result = result.resize((original_size[0] * 2, original_size[1] * 2), Image.Resampling.LANCZOS)
-    # Classical edge-aware post-processing after Real-ESRGAN; not a separate AI model.
     if anti_alias > 0:
         import cv2
         rgb = np.asarray(result)
@@ -454,7 +442,6 @@ def enhance_frame(src: Path, dst: Path, scale: int, sharpness: float, denoise: i
                                      sigmaSpace=2 + 3*strength)
         result = Image.fromarray(cv2.addWeighted(rgb, 1.0 - 0.58*strength,
                                                   smooth, 0.58*strength, 0))
-    # Selective luminance-edge enhancement for fine anime outlines.
     if line_detail > 0:
         import cv2
         rgb = np.asarray(result).astype(np.float32)
@@ -499,69 +486,6 @@ def enhance_image(file: UploadFile=File(...), scale:int=2, denoise:int=25,
         progress_state.update({"percent": 100, "stage": "Complete", "busy": False})
         return Response(output,media_type="image/png",
           headers={"Content-Disposition":'attachment; filename="VeloceAI-Restored.png"'})
-
-# Chunked browser uploads avoid a single large multipart POST through mobile networks
-# and Cloudflare Quick Tunnels. Each request is intentionally small and retryable.
-CHUNK_UPLOAD_ROOT = Path("/content/veloceai-chunks")
-MAX_UPLOAD_CHUNK = 3 * 1024 * 1024
-
-@app.post("/api/upload/chunk")
-def receive_video_chunk(upload_id: str, index: int, total: int, file: UploadFile = File(...)):
-    if not re.fullmatch(r"[a-f0-9]{32}", upload_id or ""):
-        raise HTTPException(400, "Invalid upload session.")
-    if total < 1 or total > 100 or index < 0 or index >= total:
-        raise HTTPException(400, "Invalid video chunk number.")
-    data = file.file.read(MAX_UPLOAD_CHUNK + 1)
-    if not data or len(data) > MAX_UPLOAD_CHUNK:
-        raise HTTPException(413, "Video chunk is empty or too large.")
-    folder = CHUNK_UPLOAD_ROOT / upload_id
-    folder.mkdir(parents=True, exist_ok=True)
-    (folder / (f"{index:04d}.part")).write_bytes(data)
-    print(f"[VeloceAI chunk] saved {index + 1}/{total}; {len(data)} bytes", flush=True)
-    return {"ok": True, "index": index, "received_bytes": len(data)}
-
-
-@app.post("/api/enhance/video/chunked")
-def enhance_video_chunked(upload_id: str, total_chunks: int, filename: str = "video.mp4",
-                          scale: int = 2, denoise: int = 25, sharpness: float = 1.2,
-                          crf: int = 17, crop_black_bars: bool = False,
-                          profile: str = "anime", line_detail: int = 35,
-                          anti_alias: int = 15):
-    if not re.fullmatch(r"[a-f0-9]{32}", upload_id or ""):
-        raise HTTPException(400, "Invalid upload session.")
-    if total_chunks < 1 or total_chunks > 100:
-        raise HTTPException(400, "Invalid video chunk count.")
-    safe_name = Path(filename or "video.mp4").name
-    suffix = Path(safe_name).suffix.lower()
-    if suffix not in (".mp4", ".mov", ".mkv", ".webm"):
-        raise HTTPException(400, "Unsupported video format.")
-    folder = CHUNK_UPLOAD_ROOT / upload_id
-    assembled = folder / ("assembled" + suffix)
-    try:
-        expected = [folder / f"{i:04d}.part" for i in range(total_chunks)]
-        missing = [str(i) for i, part in enumerate(expected) if not part.is_file()]
-        if missing:
-            raise HTTPException(400, "Video upload is incomplete; missing chunks: " + ", ".join(missing[:8]))
-        total_bytes = sum(part.stat().st_size for part in expected)
-        if total_bytes <= 0 or total_bytes > 150 * 1024 * 1024:
-            raise HTTPException(413, "Video limit is 150 MB.")
-        with assembled.open("wb") as output:
-            for part in expected:
-                with part.open("rb") as source:
-                    shutil.copyfileobj(source, output)
-        print(f"[VeloceAI chunk] assembled {safe_name}; {total_bytes} bytes; processing", flush=True)
-        source_file = assembled.open("rb")
-        upload = UploadFile(filename=safe_name, file=source_file)
-        try:
-            return enhance_video(file=upload, scale=scale, denoise=denoise,
-                                 sharpness=sharpness, crf=crf,
-                                 crop_black_bars=crop_black_bars, profile=profile,
-                                 line_detail=line_detail, anti_alias=anti_alias)
-        finally:
-            source_file.close()
-    finally:
-        shutil.rmtree(folder, ignore_errors=True)
-
 
 @app.post("/api/enhance/video")
 @track_progress
@@ -621,8 +545,6 @@ def enhance_video(file:UploadFile=File(...), scale:int=2, denoise:int=25,
             crops=re.findall(r"crop=(\d+:\d+:\d+:\d+)", "\\n".join(detect_lines))
             if detect_code == 0 and crops:
                 crop_filter=crops[-1]
-        # FFmpeg extraction used to block at a fixed 8% until every PNG was written.
-        # Its progress pipe now advances the UI while frames are being decoded.
         set_progress(8, "Extracting video frames · 0%")
         extract=["ffmpeg","-y","-hide_banner","-loglevel","error","-nostats",
                  "-stats_period","0.5","-progress","pipe:1","-i",str(src)]
@@ -661,7 +583,6 @@ def enhance_video(file:UploadFile=File(...), scale:int=2, denoise:int=25,
         try:
             total_frames = len(inputs)
             for i,p in enumerate(inputs,1):
-                # Advance the stage before the expensive model call, not only after it.
                 start_percent=12 + int(79*(i-1)/total_frames)
                 set_progress(start_percent, f"AI enhancement · frame {i}/{total_frames}")
                 enhance_frame(p,out/(f"{i:08d}.png"),scale,sharpness,denoise,profile,line_detail,anti_alias)

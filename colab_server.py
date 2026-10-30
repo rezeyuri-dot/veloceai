@@ -2,12 +2,13 @@
 import os
 import re
 import uuid
+from uuid import uuid4
 import shutil
 import subprocess, tempfile, time
 import urllib.request
 from functools import wraps
 from pathlib import Path
-from threading import Lock
+from threading import Lock, Thread
 import numpy as np
 import torch
 from PIL import Image

@@ -1,5 +1,7 @@
 """VeloceAI inference API using Spandrel (no BasicSR dependency)."""
 import os
+import re
+import uuid
 import shutil
 import subprocess, tempfile, time
 import urllib.request
@@ -49,8 +51,9 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False,
 @app.middleware("http")
 async def log_enhancement_requests(request, call_next):
     """Log upload arrival and completion so tunnel failures are distinguishable from AI failures."""
-    is_enhancement = request.method == "POST" and request.url.path in (
-        "/api/enhance/image", "/api/enhance/video"
+    is_enhancement = request.method == "POST" and (
+        request.url.path in ("/api/enhance/image", "/api/enhance/video", "/api/enhance/video/chunked")
+        or request.url.path == "/api/upload/chunk"
     )
     started = time.monotonic()
     if is_enhancement:
@@ -318,6 +321,69 @@ def enhance_image(file: UploadFile=File(...), scale:int=2, denoise:int=25,
         progress_state.update({"percent": 100, "stage": "Complete", "busy": False})
         return Response(output,media_type="image/png",
           headers={"Content-Disposition":'attachment; filename="VeloceAI-Restored.png"'})
+
+# Chunked browser uploads avoid a single large multipart POST through mobile networks
+# and Cloudflare Quick Tunnels. Each request is intentionally small and retryable.
+CHUNK_UPLOAD_ROOT = Path("/content/veloceai-chunks")
+MAX_UPLOAD_CHUNK = 3 * 1024 * 1024
+
+@app.post("/api/upload/chunk")
+def receive_video_chunk(upload_id: str, index: int, total: int, file: UploadFile = File(...)):
+    if not re.fullmatch(r"[a-f0-9]{32}", upload_id or ""):
+        raise HTTPException(400, "Invalid upload session.")
+    if total < 1 or total > 100 or index < 0 or index >= total:
+        raise HTTPException(400, "Invalid video chunk number.")
+    data = file.file.read(MAX_UPLOAD_CHUNK + 1)
+    if not data or len(data) > MAX_UPLOAD_CHUNK:
+        raise HTTPException(413, "Video chunk is empty or too large.")
+    folder = CHUNK_UPLOAD_ROOT / upload_id
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / (f"{index:04d}.part")).write_bytes(data)
+    print(f"[VeloceAI chunk] saved {index + 1}/{total}; {len(data)} bytes", flush=True)
+    return {"ok": True, "index": index, "received_bytes": len(data)}
+
+
+@app.post("/api/enhance/video/chunked")
+def enhance_video_chunked(upload_id: str, total_chunks: int, filename: str = "video.mp4",
+                          scale: int = 2, denoise: int = 25, sharpness: float = 1.2,
+                          crf: int = 17, crop_black_bars: bool = False,
+                          profile: str = "anime", line_detail: int = 35,
+                          anti_alias: int = 15):
+    if not re.fullmatch(r"[a-f0-9]{32}", upload_id or ""):
+        raise HTTPException(400, "Invalid upload session.")
+    if total_chunks < 1 or total_chunks > 100:
+        raise HTTPException(400, "Invalid video chunk count.")
+    safe_name = Path(filename or "video.mp4").name
+    suffix = Path(safe_name).suffix.lower()
+    if suffix not in (".mp4", ".mov", ".mkv", ".webm"):
+        raise HTTPException(400, "Unsupported video format.")
+    folder = CHUNK_UPLOAD_ROOT / upload_id
+    assembled = folder / ("assembled" + suffix)
+    try:
+        expected = [folder / f"{i:04d}.part" for i in range(total_chunks)]
+        missing = [str(i) for i, part in enumerate(expected) if not part.is_file()]
+        if missing:
+            raise HTTPException(400, "Video upload is incomplete; missing chunks: " + ", ".join(missing[:8]))
+        total_bytes = sum(part.stat().st_size for part in expected)
+        if total_bytes <= 0 or total_bytes > 150 * 1024 * 1024:
+            raise HTTPException(413, "Video limit is 150 MB.")
+        with assembled.open("wb") as output:
+            for part in expected:
+                with part.open("rb") as source:
+                    shutil.copyfileobj(source, output)
+        print(f"[VeloceAI chunk] assembled {safe_name}; {total_bytes} bytes; processing", flush=True)
+        source_file = assembled.open("rb")
+        upload = UploadFile(filename=safe_name, file=source_file)
+        try:
+            return enhance_video(file=upload, scale=scale, denoise=denoise,
+                                 sharpness=sharpness, crf=crf,
+                                 crop_black_bars=crop_black_bars, profile=profile,
+                                 line_detail=line_detail, anti_alias=anti_alias)
+        finally:
+            source_file.close()
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
 
 @app.post("/api/enhance/video")
 @track_progress

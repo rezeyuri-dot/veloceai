@@ -395,7 +395,7 @@ $('run').onclick=async()=>{
   resetResult();setBusy(true);setProgress(1,'Preparing upload');
   msg('Uploading media and starting AI processing. Keep the Colab session running.');
   try{
-    resultBlob=mode==='video'?await sendChunkedVideoRequest(endpoint,file):await sendEnhancementRequest(endpoint,data);
+    resultBlob=await sendEnhancementRequest(endpoint,data);
     if(!resultBlob||!resultBlob.size)throw new Error('The engine returned an empty result.');
     resultUrl=URL.createObjectURL(resultBlob);
     setMediaPreview($('cmpAfter'),resultUrl,mode,resultBlob,mode==='video'?'VeloceAI-Enhanced.mp4':'VeloceAI-Enhanced.png');

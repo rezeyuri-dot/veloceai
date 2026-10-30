@@ -11,7 +11,8 @@ from threading import Lock
 import numpy as np
 import torch
 from PIL import Image
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, Body, HTTPException
+from starlette.datastructures import UploadFile as StarletteUploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 import uvicorn
@@ -81,6 +82,14 @@ MODEL_LOCK = Lock()
 PROCESS_LOCK = Lock()
 progress_state = {"percent": 0, "stage": "idle", "busy": False}
 
+# Chunked mobile uploads and background jobs avoid one long multipart tunnel request.
+UPLOAD_ROOT = Path(os.environ.get("VELOCEAI_UPLOAD_DIR", "/content/veloceai-uploads"))
+UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+UPLOADS = {}
+JOBS = {}
+JOB_LOCK = Lock()
+CHUNK_SIZE = 1024 * 1024
+
 def set_progress(percent, stage):
     progress_state.update({"percent": max(0, min(100, int(percent))), "stage": str(stage)})
 
@@ -115,6 +124,149 @@ def home():
 @app.get("/progress")
 def get_progress():
     return dict(progress_state)
+
+@app.post("/api/upload/init")
+def upload_init(payload: dict = Body(...)):
+    filename = Path(str(payload.get("filename", "upload.bin"))).name
+    kind = str(payload.get("kind", ""))
+    size = int(payload.get("size", 0))
+    allowed = (".png", ".jpg", ".jpeg", ".webp", ".bmp") if kind == "image" else (".mp4", ".mov", ".mkv", ".webm")
+    limit = 25 * 1024 * 1024 if kind == "image" else 150 * 1024 * 1024
+    if kind not in ("image", "video") or Path(filename).suffix.lower() not in allowed:
+        raise HTTPException(400, "Unsupported media type.")
+    if size <= 0 or size > limit:
+        raise HTTPException(413, f"File size must be between 1 byte and {limit // (1024*1024)} MB.")
+    upload_id = uuid4().hex
+    folder = UPLOAD_ROOT / upload_id
+    folder.mkdir(parents=True, exist_ok=False)
+    with JOB_LOCK:
+        UPLOADS[upload_id] = {"filename": filename, "kind": kind, "size": size,
+                              "chunk_size": CHUNK_SIZE, "folder": folder, "chunks": set()}
+    print(f"[VeloceAI chunk upload] started id={upload_id} kind={kind} size={size}", flush=True)
+    return {"ok": True, "upload_id": upload_id, "chunk_size": CHUNK_SIZE}
+
+
+@app.post("/api/upload/chunk")
+def upload_chunk(upload_id: str = Form(...), index: int = Form(...), file: UploadFile = File(...)):
+    with JOB_LOCK:
+        state = UPLOADS.get(upload_id)
+    if not state:
+        raise HTTPException(404, "Upload session not found. Please restart the upload.")
+    total_chunks = (state["size"] + state["chunk_size"] - 1) // state["chunk_size"]
+    if index < 0 or index >= total_chunks:
+        raise HTTPException(400, "Invalid upload chunk number.")
+    data = file.file.read()
+    expected = min(state["chunk_size"], state["size"] - index * state["chunk_size"])
+    if len(data) != expected:
+        raise HTTPException(400, f"Chunk {index} has {len(data)} bytes; expected {expected}.")
+    (state["folder"] / f"{index:06d}.part").write_bytes(data)
+    with JOB_LOCK:
+        state["chunks"].add(index)
+    print(f"[VeloceAI chunk upload] id={upload_id} chunk={index+1}/{total_chunks} bytes={len(data)}", flush=True)
+    return {"ok": True, "index": index}
+
+
+@app.post("/api/jobs/start")
+def start_job(payload: dict = Body(...)):
+    upload_id = str(payload.get("upload_id", ""))
+    settings = payload.get("settings") or {}
+    with JOB_LOCK:
+        state = UPLOADS.get(upload_id)
+        active = any(j.get("status") in ("queued", "processing") for j in JOBS.values())
+        if active or progress_state.get("busy"):
+            raise HTTPException(409, "Another enhancement is already running. Please wait.")
+        if not state:
+            raise HTTPException(404, "Upload session not found. Please upload the file again.")
+        total_chunks = (state["size"] + state["chunk_size"] - 1) // state["chunk_size"]
+        if len(state["chunks"]) != total_chunks:
+            raise HTTPException(400, "Upload is incomplete. Please retry the missing chunks.")
+        source = state["folder"] / state["filename"]
+        with open(source, "wb") as merged:
+            for index in range(total_chunks):
+                part = state["folder"] / f"{index:06d}.part"
+                if not part.is_file():
+                    raise HTTPException(400, f"Upload chunk {index} is missing.")
+                with open(part, "rb") as chunk:
+                    shutil.copyfileobj(chunk, merged)
+        if source.stat().st_size != state["size"]:
+            raise HTTPException(400, "Uploaded file size does not match the original.")
+        job_id = uuid4().hex
+        job_folder = state["folder"]
+        JOBS[job_id] = {"status": "queued", "percent": 0, "stage": "Queued",
+                        "result": None, "error": None, "kind": state["kind"],
+                        "filename": state["filename"]}
+        del UPLOADS[upload_id]
+    Thread(target=_run_enhancement_job,
+           args=(job_id, state["kind"], state["filename"], source, job_folder, settings),
+           daemon=True).start()
+    print(f"[VeloceAI job] queued id={job_id} kind={state['kind']}", flush=True)
+    return {"ok": True, "job_id": job_id}
+
+
+def _run_enhancement_job(job_id, kind, filename, source, folder, settings):
+    with JOB_LOCK:
+        JOBS[job_id]["status"] = "processing"
+        JOBS[job_id]["stage"] = "Starting AI engine"
+    try:
+        params = {"scale": int(settings.get("scale", 2)),
+                  "denoise": int(settings.get("denoise", 0)),
+                  "sharpness": float(settings.get("sharpness", 1.2)),
+                  "crf": int(settings.get("crf", 17)),
+                  "profile": str(settings.get("profile", "anime")),
+                  "line_detail": int(settings.get("line_detail", 20)),
+                  "anti_alias": int(settings.get("anti_alias", 0))}
+        with open(source, "rb") as source_file:
+            upload = StarletteUploadFile(filename=filename, file=source_file)
+            if kind == "image":
+                response = enhance_image(file=upload, **params)
+                output_name, media_type = "VeloceAI-Restored.png", "image/png"
+            else:
+                crop = str(settings.get("crop_black_bars", "false")).lower() in ("1", "true", "yes")
+                response = enhance_video(file=upload, crop_black_bars=crop, **params)
+                output_name, media_type = "VeloceAI-Restored.mp4", "video/mp4"
+        result_path = folder / output_name
+        result_path.write_bytes(response.body)
+        if not result_path.is_file() or result_path.stat().st_size == 0:
+            raise RuntimeError("The enhancement result is empty.")
+        with JOB_LOCK:
+            JOBS[job_id].update({"status": "complete", "percent": 100, "stage": "Complete",
+                                 "result": str(result_path), "media_type": media_type,
+                                 "output_name": output_name})
+        print(f"[VeloceAI job] complete id={job_id} bytes={result_path.stat().st_size}", flush=True)
+    except Exception as exc:
+        detail = str(getattr(exc, "detail", exc))[:500]
+        with JOB_LOCK:
+            JOBS[job_id].update({"status": "failed", "error": detail,
+                                 "stage": "Failed: " + detail, "percent": 0})
+        progress_state.update({"percent": 0, "stage": "Failed: " + detail[:100], "busy": False})
+        print(f"[VeloceAI job] failed id={job_id}: {detail}", flush=True)
+
+
+@app.get("/api/jobs/{job_id}")
+def get_job(job_id: str):
+    with JOB_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            raise HTTPException(404, "Enhancement job not found.")
+        result = {k: job.get(k) for k in ("status", "percent", "stage", "error")}
+    if result["status"] == "processing":
+        result["percent"] = progress_state.get("percent", result["percent"])
+        result["stage"] = progress_state.get("stage", result["stage"])
+    return result
+
+
+@app.get("/api/jobs/{job_id}/result")
+def get_job_result(job_id: str):
+    with JOB_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            raise HTTPException(404, "Enhancement job not found.")
+        if job.get("status") != "complete" or not job.get("result"):
+            raise HTTPException(409, "Enhancement is not complete yet.")
+        path, media_type, output_name = job["result"], job["media_type"], job["output_name"]
+    return FileResponse(path, media_type=media_type, filename=output_name,
+                        headers={"Cache-Control": "no-store"})
+
 
 
 @app.post("/api/preview/video")

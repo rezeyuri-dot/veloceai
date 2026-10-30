@@ -1,0 +1,34 @@
+name: Deploy to Hugging Face Space
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out VeloceAI
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Validate deployment settings
+        env:
+          HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          test -n "$HF_SPACE_ID" || (echo "Missing repository variable HF_SPACE_ID (username/space-name)." && exit 1)
+          test -n "$HF_TOKEN" || (echo "Missing repository secret HF_TOKEN with write access to Spaces." && exit 1)
+
+      - name: Sync repository to Hugging Face Docker Space
+        uses: huggingface/hub-sync@v0.3.0
+        with:
+          github_repo_id: ${{ github.repository }}
+          huggingface_repo_id: ${{ vars.HF_SPACE_ID }}
+          hf_token: ${{ secrets.HF_TOKEN }}
+          space_sdk: docker

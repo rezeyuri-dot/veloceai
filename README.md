@@ -34,8 +34,8 @@ This repository includes a GitHub Actions workflow that mirrors the project to a
 2. In the GitHub repository settings, add:
    - Repository variable `HF_SPACE_ID`: your Hugging Face Space ID, in the form `username/veloceai`.
    - Repository secret `HF_TOKEN`: the Hugging Face write token.
-3. Run the **Deploy to Hugging Face Space** workflow once from the Actions tab. Later pushes to `main` sync automatically.
-4. In the new Space Settings → Hardware, select **NVIDIA T4 small** or faster, then wait for the Space to rebuild.
+3. Run the **Deploy to Hugging Face Space** workflow from the Actions tab whenever you are ready to publish. This is manual so an unconfigured repository does not produce failed deploys.
+4. In the new Space Settings → Hardware, select **NVIDIA T4 small** or faster, then wait for the Space to rebuild. Docker Spaces require a Hugging Face Pro plan (personal accounts), and GPU use is billed separately.
 5. Open the Space URL. Keep the Space running while you process files; pause or downgrade the hardware when you are not using it to avoid ongoing GPU charges.
 
 The token is stored as a GitHub Actions secret and is not part of the website or source code.

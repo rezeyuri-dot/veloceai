@@ -49,7 +49,7 @@ button,input,select{font:inherit;color:inherit}button{cursor:pointer}.wrap{max-w
     </div>
     <div class="fileinfo hidden" id="fileInfo"><strong id="fileName">—</strong><button class="linkbtn" id="removeFile" type="button">Remove</button></div>
     <div class="preview" id="before"><div class="empty"><div class="emptyicon">▣</div>Your media preview will appear here</div></div>
-    <p class="helper" id="uploadHelper">Tip: use the Anime profile for animation or Realistic for live-action footage.</p>
+    <p class="helper" id="uploadHelper">Choose ANIME for drawn content or GENERAL for live-action and mixed footage.</p>
   </section>
 
   <section class="panel">
@@ -63,7 +63,7 @@ button,input,select{font:inherit;color:inherit}button{cursor:pointer}.wrap{max-w
       <div class="subhead">Detail controls</div>
       <div class="setting"><label for="denoise">Noise reduction <strong id="denoiseV">0%</strong></label><input class="range" id="denoise" type="range" min="0" max="100" value="0"><p class="hint">Reduce grain and visual noise.</p></div>
       <div class="setting"><label for="sharp">Sharpening <strong id="sharpV">20%</strong></label><input class="range" id="sharp" type="range" min="0" max="100" value="20"><p class="hint">Increase perceived edge definition.</p></div>
-      <div class="setting"><label for="lineDetail">Anime line detail <strong id="lineDetailV">20%</strong></label><input class="range" id="lineDetail" type="range" min="0" max="100" value="20"><p class="hint">Refine fine outlines in drawn content.</p></div>
+      <div class="setting"><label for="lineDetail">Line detail <strong id="lineDetailV">20%</strong></label><input class="range" id="lineDetail" type="range" min="0" max="100" value="20"><p class="hint">Refine fine outlines and edge definition; strongest on ANIME.</p></div>
       <div class="setting"><label for="antiAlias">Edge smoothing <strong id="antiAliasV">0%</strong></label><input class="range" id="antiAlias" type="range" min="0" max="100" value="0"><p class="hint">Soften jagged edges; too much may blur detail.</p></div>
       <div class="setting"><label for="compression">Export quality</label><select id="compression"><option value="17">Very high</option><option value="19">High</option><option value="22">Smaller file</option></select><p class="hint">Higher quality usually means a larger video.</p></div>
       <div class="setting" id="cropSetting"><label class="checkline" for="cropBars"><input id="cropBars" type="checkbox"> Remove black bars (video)</label><p class="hint">Optional; crops detected letterbox or pillarbox bars.</p></div>
@@ -466,10 +466,10 @@ $('run').onclick=async()=>{
     endpoint.searchParams.set('mobile_optimize',$('mobileOptimize').checked?'true':'false');
   }
   const data=new FormData();data.append('file',file,uploadFilename(file,mode,file.name));
+  processingStartedAt=performance.now();
   resetResult();setBusy(true);setProgress(1,'Preparing upload');
   msg('Uploading media and starting AI processing. Keep the Colab session running.');
   try{
-    processingStartedAt=performance.now();
     resultBlob=await sendEnhancementRequest(endpoint,data);
     if(!resultBlob||!resultBlob.size)throw new Error('The engine returned an empty result.');
     resultUrl=URL.createObjectURL(resultBlob);

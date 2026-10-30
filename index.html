@@ -87,7 +87,7 @@ button,input,select{font:inherit;color:inherit}button{cursor:pointer}.wrap{max-w
 
 <script>
 const $=id=>document.getElementById(id);
-const API_BASE=location.hostname.endsWith('.hf.space')?location.origin:'https://adjustments-reg-tourist-nice.trycloudflare.com';
+const API_BASE=(location.hostname.endsWith('.hf.space')||location.hostname.endsWith('.trycloudflare.com')||location.hostname==='localhost'||location.hostname==='127.0.0.1')?location.origin:'https://adjustments-reg-tourist-nice.trycloudflare.com';
 const IMAGE_EXT=/\.(png|jpe?g|webp|bmp)$/i;
 const VIDEO_EXT=/\.(mp4|mov|mkv|webm)$/i;
 let file=null,mode='',previewUrl=null,resultUrl=null,resultBlob=null,progressTimer=null,metadataValid=false,busy=false;

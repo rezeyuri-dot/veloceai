@@ -216,7 +216,8 @@ def validate(scale, sharpness, denoise, crf, profile, line_detail, anti_alias):
     if not 0 <= line_detail <= 100: raise HTTPException(400,"Line detail must be between 0 and 100.")
     if not 0 <= anti_alias <= 100: raise HTTPException(400,"Anti-alias must be between 0 and 100.")
     try:
-        if progress_state.get("busy") and descriptor is None:
+        model_key = "anime" if profile == "anime" else "standard"
+        if progress_state.get("busy") and model_key not in descriptors:
             set_progress(max(8, progress_state.get("percent", 1)),
                          "Loading AI model · first startup may take longer")
         load_model(profile)

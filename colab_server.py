@@ -127,11 +127,11 @@ def validate(scale, sharpness, denoise, crf, profile, line_detail, anti_alias):
     if not 0 <= anti_alias <= 100: raise HTTPException(400,"Anti-alias must be between 0 and 100.")
     try:
         if progress_state.get("busy") and descriptor is None:
-            set_progress(max(2, progress_state.get("percent", 1)),
+            set_progress(max(8, progress_state.get("percent", 1)),
                          "Loading AI model · first startup may take longer")
         load_model()
         if progress_state.get("busy"):
-            set_progress(max(6, progress_state.get("percent", 1)), "AI model ready · preparing media")
+            set_progress(max(8, progress_state.get("percent", 1)), "AI model ready · preparing media")
     except Exception as e:
         raise HTTPException(503,"AI model unavailable: "+str(e))
 

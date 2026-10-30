@@ -1,7 +1,7 @@
 """VeloceAI inference API using Spandrel (no BasicSR dependency)."""
 import os
 import shutil
-import subprocess, tempfile
+import subprocess, tempfile, time
 import urllib.request
 from functools import wraps
 from pathlib import Path
@@ -34,6 +34,34 @@ elif DEVICE == "cuda":
 app = FastAPI(title="VeloceAI Restoration Engine", version="2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False,
                    allow_methods=["GET","POST","OPTIONS"], allow_headers=["*"])
+
+@app.middleware("http")
+async def log_enhancement_requests(request, call_next):
+    """Log upload arrival and completion so tunnel failures are distinguishable from AI failures."""
+    is_enhancement = request.method == "POST" and request.url.path in (
+        "/api/enhance/image", "/api/enhance/video"
+    )
+    started = time.monotonic()
+    if is_enhancement:
+        print(
+            f"[VeloceAI upload] received {request.method} {request.url.path} "
+            f"content-length={request.headers.get('content-length', 'unknown')}",
+            flush=True
+        )
+    try:
+        response = await call_next(request)
+    except Exception:
+        if is_enhancement:
+            print(f"[VeloceAI upload] request failed after {time.monotonic()-started:.1f}s", flush=True)
+        raise
+    if is_enhancement:
+        print(
+            f"[VeloceAI upload] completed status={response.status_code} "
+            f"elapsed={time.monotonic()-started:.1f}s",
+            flush=True
+        )
+    return response
+
 descriptor = None
 MODEL_LOCK = Lock()
 PROCESS_LOCK = Lock()

@@ -252,7 +252,10 @@ def _run_enhancement_job(job_id, kind, filename, source, folder, settings):
                 output_name, media_type = "VeloceAI-Restored.png", "image/png"
             else:
                 crop = str(settings.get("crop_black_bars", "false")).lower() in ("1", "true", "yes")
-                response = enhance_video(file=upload, crop_black_bars=crop, **params)
+                mobile_optimize = str(settings.get("mobile_optimize", "false")).lower() in ("1", "true", "yes")
+                response = enhance_video(
+                    file=upload, crop_black_bars=crop, mobile_optimize=mobile_optimize, **params
+                )
                 output_name, media_type = "VeloceAI-Restored.mp4", "video/mp4"
         result_path = folder / output_name
         result_path.write_bytes(response.body)
@@ -368,7 +371,7 @@ def load_model(profile="general"):
 def warmup(profile: str = "anime"):
     """Download and load the selected AI model during Colab startup."""
     try:
-        if profile not in ("general", "anime", "real"):
+        if profile not in ("general", "anime"):
             raise HTTPException(400, "Invalid processing profile.")
         load_model(profile)
         return {"ok": True, "model_loaded": True, "profile": profile, "device": DEVICE}
@@ -387,11 +390,11 @@ def health():
     }
 
 def validate(scale, sharpness, denoise, crf, profile, line_detail, anti_alias):
-    if scale not in (2,4): raise HTTPException(400,"Scale must be 2 or 4.")
+    if scale not in (1,2,4): raise HTTPException(400,"Scale must be 1, 2, or 4.")
     if not 1 <= sharpness <= 2: raise HTTPException(400,"Sharpness must be between 1 and 2.")
     if not 0 <= denoise <= 100: raise HTTPException(400,"Denoise must be between 0 and 100.")
     if not 15 <= crf <= 28: raise HTTPException(400,"CRF must be between 15 and 28.")
-    if profile not in ("general", "anime", "real"): raise HTTPException(400,"Invalid processing profile.")
+    if profile not in ("general", "anime"): raise HTTPException(400,"Invalid processing profile.")
     if not 0 <= line_detail <= 100: raise HTTPException(400,"Line detail must be between 0 and 100.")
     if not 0 <= anti_alias <= 100: raise HTTPException(400,"Anti-alias must be between 0 and 100.")
     try:
@@ -411,8 +414,11 @@ def enhance_frame(src: Path, dst: Path, scale: int, sharpness: float, denoise: i
     model = load_model(profile)
     im = Image.open(src).convert("RGB")
     original_size = im.size
-    if scale == 2:
-        work_size = (max(1, (im.width + 1) // 2), max(1, (im.height + 1) // 2))
+    if scale in (1, 2):
+        work_size = (
+            max(1, int(np.ceil(original_size[0] * scale / 4))),
+            max(1, int(np.ceil(original_size[1] * scale / 4))),
+        )
         im = im.resize(work_size, Image.Resampling.LANCZOS)
     if denoise:
         import cv2
@@ -432,8 +438,9 @@ def enhance_frame(src: Path, dst: Path, scale: int, sharpness: float, denoise: i
         y = model.model(x).clamp(0,1)
     out = (y.squeeze(0).permute(1,2,0).cpu().numpy()*255.0).round().clip(0,255).astype(np.uint8)
     result = Image.fromarray(out)
-    if scale == 2 and result.size != (original_size[0] * 2, original_size[1] * 2):
-        result = result.resize((original_size[0] * 2, original_size[1] * 2), Image.Resampling.LANCZOS)
+    target_size = (original_size[0] * scale, original_size[1] * scale)
+    if result.size != target_size:
+        result = result.resize(target_size, Image.Resampling.LANCZOS)
     if anti_alias > 0:
         import cv2
         rgb = np.asarray(result)
@@ -490,8 +497,9 @@ def enhance_image(file: UploadFile=File(...), scale:int=2, denoise:int=25,
 @app.post("/api/enhance/video")
 @track_progress
 def enhance_video(file:UploadFile=File(...), scale:int=2, denoise:int=25,
-                        sharpness:float=1.2, crf:int=17, crop_black_bars:bool=False,
-                        profile:str="anime", line_detail:int=35, anti_alias:int=15):
+                         sharpness:float=1.2, crf:int=17, crop_black_bars:bool=False,
+                         profile:str="anime", line_detail:int=35, anti_alias:int=15,
+                         mobile_optimize:bool=False):
     progress_state.update({"percent": 1, "stage": "Preparing video request", "busy": True})
     validate(scale,sharpness,denoise,crf,profile,line_detail,anti_alias)
     suffix=Path(file.filename or "video.mp4").suffix.lower()
@@ -594,8 +602,10 @@ def enhance_video(file:UploadFile=File(...), scale:int=2, denoise:int=25,
         encode=["ffmpeg","-y","-hide_banner","-loglevel","error","-nostats",
           "-stats_period","0.5","-progress","pipe:1","-framerate",fps,
           "-i",str(out/"%08d.png"),"-i",str(src),
-          "-map","0:v:0","-map","1:a:0?","-c:v","libx264","-preset","veryfast","-crf",str(crf),
-          "-pix_fmt","yuv420p","-c:a","aac","-b:a","192k","-movflags","+faststart",
+          "-map","0:v:0","-map","1:a:0?","-c:v","libx264","-preset","veryfast","-crf",str(crf)]
+        if mobile_optimize:
+            encode += ["-profile:v","main","-tag:v","avc1"]
+        encode += ["-pix_fmt","yuv420p","-c:a","aac","-b:a","192k","-movflags","+faststart",
           "-t",f"{duration:.6f}",str(target)]
         enc=subprocess.Popen(encode,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
                              text=True,bufsize=1)

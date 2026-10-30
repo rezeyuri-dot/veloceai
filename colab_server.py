@@ -1,4 +1,5 @@
 """VeloceAI inference API using Spandrel (no BasicSR dependency)."""
+import os
 import subprocess, tempfile
 from functools import wraps
 from pathlib import Path
@@ -14,6 +15,16 @@ from spandrel import ModelLoader
 
 MODEL = Path("/content/RealESRGAN_x4plus.pth")
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+# Avoid CPU thread oversubscription on Colab; use AMP on CUDA in enhance_frame.
+if DEVICE == "cpu":
+    torch.set_num_threads(max(1, min(4, os.cpu_count() or 2)))
+    try:
+        torch.set_num_interop_threads(1)
+    except RuntimeError:
+        pass
+elif DEVICE == "cuda":
+    torch.backends.cudnn.benchmark = True
+
 app = FastAPI(title="VeloceAI Restoration Engine", version="2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False,
                    allow_methods=["GET","POST","OPTIONS"], allow_headers=["*"])
@@ -92,6 +103,8 @@ def load_model():
                 raise RuntimeError("Model file missing: " + str(MODEL))
             loaded = ModelLoader().load_from_file(MODEL)
             loaded.model.eval().to(DEVICE)
+            if DEVICE == "cuda":
+                loaded.model.to(memory_format=torch.channels_last)
             descriptor = loaded
     return descriptor
 
@@ -129,7 +142,14 @@ def enhance_frame(src: Path, dst: Path, scale: int, sharpness: float, denoise: i
     im = Image.open(src).convert("RGB")
     arr = np.asarray(im).astype(np.float32) / 255.0
     x = torch.from_numpy(arr).permute(2,0,1).unsqueeze(0).to(DEVICE)
-    y = model.model(x).clamp(0,1)
+    if DEVICE == "cuda":
+        x = x.contiguous(memory_format=torch.channels_last)
+        # FP16 autocast is supported by the CUDA conv layers in Real-ESRGAN
+        # and reduces per-frame latency and VRAM use on Colab GPUs.
+        with torch.autocast(device_type="cuda", dtype=torch.float16):
+            y = model.model(x).clamp(0,1)
+    else:
+        y = model.model(x).clamp(0,1)
     if scale == 2:
         h,w = y.shape[-2:]
         y = torch.nn.functional.interpolate(y, size=(h//2,w//2), mode="bicubic", align_corners=False)
@@ -226,32 +246,79 @@ def enhance_video(file:UploadFile=File(...), scale:int=2, denoise:int=25,
             crops=re.findall(r"crop=(\d+:\d+:\d+:\d+)",detect.stderr)
             if crops:
                 crop_filter=crops[-1]
-        set_progress(8, "Extracting video frames")
-        extract=["ffmpeg","-y","-v","error","-i",str(src)]
+        # FFmpeg extraction used to block at a fixed 8% until every PNG was written.
+        # Its progress pipe now advances the UI while frames are being decoded.
+        set_progress(8, "Extracting video frames · 0%")
+        extract=["ffmpeg","-y","-hide_banner","-loglevel","error","-nostats",
+                 "-stats_period","0.5","-progress","pipe:1","-i",str(src)]
         if crop_filter:
             extract += ["-vf",f"crop={crop_filter}"]
-        extract += ["-map","0:v:0","-vsync","0",str(frames/"%08d.png")]
-        ex=subprocess.run(extract,capture_output=True,text=True)
-        if ex.returncode: raise HTTPException(400,"Frame extraction failed: "+ex.stderr[-800:])
+        extract += ["-map","0:v:0","-vsync","0","-compression_level","1",str(frames/"%08d.png")]
+        ex=subprocess.Popen(extract,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
+                            text=True,bufsize=1)
+        extract_errors=[]
+        for raw_line in ex.stdout:
+            line=raw_line.strip()
+            if line and ("=" not in line or line.startswith("Error")):
+                extract_errors.append(line)
+                extract_errors=extract_errors[-12:]
+            if line.startswith("out_time_ms="):
+                try:
+                    elapsed=max(0,int(line.split("=",1)[1]))/1_000_000
+                    ratio=min(1.0,elapsed/max(duration,0.001))
+                    set_progress(8 + int(4*ratio),
+                                 f"Extracting video frames · {round(ratio*100)}%")
+                except ValueError:
+                    pass
+            elif line.startswith("frame="):
+                try:
+                    extracted_frames=max(0,int(line.split("=",1)[1]))
+                    set_progress(max(8,min(12,8+int(4*extracted_frames/max(duration*float(fps.split('/')[0]) if '/' not in fps else duration*max(float(fps.split('/')[0])/max(float(fps.split('/')[1]),0.001),1),1)))),
+                                 f"Extracting video frames · {extracted_frames} frames")
+                except (ValueError,ZeroDivisionError):
+                    pass
+        extract_code=ex.wait()
+        if extract_code != 0:
+            raise HTTPException(400,"Frame extraction failed: "+" ".join(extract_errors)[-800:])
         inputs=sorted(frames.glob("*.png"))
         if not inputs: raise HTTPException(400,"No video frames found.")
         try:
             total_frames = len(inputs)
             for i,p in enumerate(inputs,1):
+                # Advance the stage before the expensive model call, not only after it.
+                start_percent=12 + int(79*(i-1)/total_frames)
+                set_progress(start_percent, f"AI enhancement · frame {i}/{total_frames}")
                 enhance_frame(p,out/(f"{i:08d}.png"),scale,sharpness,denoise,profile,line_detail,anti_alias)
-                set_progress(10 + int(80*i/total_frames), f"Enhancing frame {i}/{total_frames}")
+                set_progress(12 + int(79*i/total_frames), f"AI enhancement · frame {i}/{total_frames}")
         except Exception as e:
-            progress_state.update({"stage": "Failed", "busy": False})
-            raise HTTPException(500,"Video AI failed: "+str(e))
-        set_progress(93, "Encoding video and audio")
+            raise HTTPException(500,"Video AI failed: "+str(e)) from e
+        set_progress(92, "Encoding enhanced video and audio · 0%")
         target=root/"VeloceAI-Restored.mp4"
-        enc=subprocess.run(["ffmpeg","-y","-v","error","-framerate",fps,"-i",str(out/"%08d.png"),"-i",str(src),
+        encode=["ffmpeg","-y","-hide_banner","-loglevel","error","-nostats",
+          "-stats_period","0.5","-progress","pipe:1","-framerate",fps,
+          "-i",str(out/"%08d.png"),"-i",str(src),
           "-map","0:v:0","-map","1:a:0?","-c:v","libx264","-preset","veryfast","-crf",str(crf),
-          "-pix_fmt","yuv420p","-c:a","aac","-b:a","192k","-movflags","+faststart","-t",f"{duration:.6f}",str(target)],
-          capture_output=True,text=True,timeout=1200)
-        if enc.returncode or not target.exists():
-            progress_state.update({"stage": "Failed", "busy": False})
-            raise HTTPException(500,"Video export failed: "+enc.stderr[-1000:])
+          "-pix_fmt","yuv420p","-c:a","aac","-b:a","192k","-movflags","+faststart",
+          "-t",f"{duration:.6f}",str(target)]
+        enc=subprocess.Popen(encode,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
+                             text=True,bufsize=1)
+        encode_errors=[]
+        for raw_line in enc.stdout:
+            line=raw_line.strip()
+            if line and ("=" not in line or line.startswith("Error")):
+                encode_errors.append(line)
+                encode_errors=encode_errors[-12:]
+            if line.startswith("out_time_ms="):
+                try:
+                    elapsed=max(0,int(line.split("=",1)[1]))/1_000_000
+                    ratio=min(1.0,elapsed/max(duration,0.001))
+                    set_progress(92 + int(6*ratio),
+                                 f"Encoding video and audio · {round(ratio*100)}%")
+                except ValueError:
+                    pass
+        encode_code=enc.wait()
+        if encode_code != 0 or not target.exists():
+            raise HTTPException(500,"Video export failed: "+" ".join(encode_errors)[-1000:])
         output = target.read_bytes()
         if not output:
             raise HTTPException(500, "The enhanced video file is empty.")

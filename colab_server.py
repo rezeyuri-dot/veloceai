@@ -147,6 +147,16 @@ def upload_init(payload: dict = Body(...)):
     return {"ok": True, "upload_id": upload_id, "chunk_size": CHUNK_SIZE}
 
 
+
+@app.delete("/api/upload/{upload_id}")
+def cancel_upload(upload_id: str):
+    with JOB_LOCK:
+        state = UPLOADS.pop(upload_id, None)
+    if state:
+        shutil.rmtree(state["folder"], ignore_errors=True)
+    return {"ok": True}
+
+
 @app.post("/api/upload/chunk")
 def upload_chunk(upload_id: str = Form(...), index: int = Form(...), file: UploadFile = File(...)):
     with JOB_LOCK:

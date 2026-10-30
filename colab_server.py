@@ -1,6 +1,8 @@
 """VeloceAI inference API using Spandrel (no BasicSR dependency)."""
 import os
+import shutil
 import subprocess, tempfile
+import urllib.request
 from functools import wraps
 from pathlib import Path
 from threading import Lock
@@ -9,11 +11,15 @@ import torch
 from PIL import Image
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 import uvicorn
 from spandrel import ModelLoader
 
-MODEL = Path("/content/RealESRGAN_x4plus.pth")
+MODEL = Path(os.environ.get("MODEL_PATH", "/content/RealESRGAN_x4plus.pth"))
+MODEL_URL = os.environ.get(
+    "MODEL_URL",
+    "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
+)
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # Avoid CPU thread oversubscription on Colab; use AMP on CUDA in enhance_frame.
 if DEVICE == "cpu":
@@ -30,6 +36,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False,
                    allow_methods=["GET","POST","OPTIONS"], allow_headers=["*"])
 descriptor = None
 MODEL_LOCK = Lock()
+PROCESS_LOCK = Lock()
 progress_state = {"percent": 0, "stage": "idle", "busy": False}
 
 def set_progress(percent, stage):
@@ -40,6 +47,8 @@ def track_progress(func):
     """Keep progress state recoverable when validation or processing fails."""
     @wraps(func)
     def wrapper(*args, **kwargs):
+        if not PROCESS_LOCK.acquire(blocking=False):
+            raise HTTPException(409, "Another enhancement is already running. Please wait for it to finish.")
         try:
             return func(*args, **kwargs)
         except HTTPException as exc:
@@ -52,7 +61,14 @@ def track_progress(func):
             raise HTTPException(500, "Processing failed: " + detail) from exc
         finally:
             progress_state["busy"] = False
+            PROCESS_LOCK.release()
     return wrapper
+
+@app.get("/")
+def home():
+    """Serve the frontend and API from one permanent origin."""
+    return FileResponse(Path(__file__).with_name("index.html"), media_type="text/html")
+
 
 @app.get("/progress")
 def get_progress():
@@ -95,12 +111,33 @@ def load_model():
     global descriptor
     if descriptor is not None:
         return descriptor
-    # /health and an enhancement request may arrive together on a cold start.
-    # Load the model once to avoid duplicate memory-heavy initializations.
+    # A hosted Space downloads the model automatically on its first request.
+    # Colab can keep using the model downloaded by its setup cell.
     with MODEL_LOCK:
         if descriptor is None:
             if not MODEL.is_file():
-                raise RuntimeError("Model file missing: " + str(MODEL))
+                if progress_state.get("busy"):
+                    set_progress(max(8, progress_state.get("percent", 1)),
+                                 "Downloading Real-ESRGAN model weights")
+                MODEL.parent.mkdir(parents=True, exist_ok=True)
+                temporary_model = MODEL.with_suffix(MODEL.suffix + ".download")
+                try:
+                    request = urllib.request.Request(
+                        MODEL_URL,
+                        headers={"User-Agent": "VeloceAI/1.0"}
+                    )
+                    with urllib.request.urlopen(request, timeout=120) as response, open(temporary_model, "wb") as target:
+                        shutil.copyfileobj(response, target)
+                    if temporary_model.stat().st_size < 20 * 1024 * 1024:
+                        raise RuntimeError("Downloaded model file is too small or incomplete.")
+                    temporary_model.replace(MODEL)
+                except Exception:
+                    if temporary_model.exists():
+                        temporary_model.unlink()
+                    raise
+            if progress_state.get("busy"):
+                set_progress(max(10, progress_state.get("percent", 1)),
+                             "Loading Real-ESRGAN model")
             loaded = ModelLoader().load_from_file(MODEL)
             loaded.model.eval().to(DEVICE)
             if DEVICE == "cuda":
@@ -110,12 +147,14 @@ def load_model():
 
 @app.get("/health")
 def health():
-    try:
-        m = load_model()
-        return {"ok": True, "engine": "Real-ESRGAN x4plus via Spandrel", "device": DEVICE,
-                "message": "ready"}
-    except Exception as e:
-        return {"ok": False, "engine": "Spandrel", "message": str(e)}
+    # Liveness only: do not download/load the model during every page open.
+    return {
+        "ok": True,
+        "engine": "Real-ESRGAN x4plus via Spandrel",
+        "device": DEVICE,
+        "model_loaded": descriptor is not None,
+        "message": "ready" if descriptor is not None else "model loads automatically on first enhancement"
+    }
 
 def validate(scale, sharpness, denoise, crf, profile, line_detail, anti_alias):
     if scale not in (2,4): raise HTTPException(400,"Scale must be 2 or 4.")
@@ -360,4 +399,10 @@ def enhance_video(file:UploadFile=File(...), scale:int=2, denoise:int=25,
           headers={"Content-Disposition":'attachment; filename="VeloceAI-Restored.mp4"'})
 
 if __name__=="__main__":
-    uvicorn.run(app,host="0.0.0.0",port=8000)
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", "8000")),
+        proxy_headers=True,
+        forwarded_allow_ips="*"
+    )

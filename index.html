@@ -91,7 +91,7 @@ const $=id=>document.getElementById(id);
 const API_BASE=window.location.origin;
 const IMAGE_EXT=/\.(png|jpe?g|webp|bmp)$/i;
 const VIDEO_EXT=/\.(mp4|mov|mkv|webm)$/i;
-let file=null,mode='',previewUrl=null,resultUrl=null,resultBlob=null,progressTimer=null,metadataValid=false,busy=false;
+let file=null,mode='',previewUrl=null,resultUrl=null,resultBlob=null,metadataValid=false,busy=false;
 let thumbnailCache=new WeakMap(),thumbnailUrls=[];
 const msg=t=>$('msg').textContent=t;
 const setProgress=(n,stage)=>{
@@ -242,113 +242,60 @@ function setMediaPreview(container,url,kind,sourceBlob=file,sourceName=''){
   if(kind==='video')node.load();
 }
 async function sendEnhancementRequest(endpoint,formData){
-  return await new Promise((resolve,reject)=>{
-    const xhr=new XMLHttpRequest();
-    xhr.open('POST',endpoint.toString(),true);
-    xhr.responseType='blob';
-    xhr.timeout=30*60*1000;
-    xhr.upload.onprogress=event=>{
-      if(event.lengthComputable){
-        const percent=Math.max(1,Math.min(8,1+Math.round((event.loaded/event.total)*7)));
-        setProgress(percent,'Uploading '+mode+'…');
-      }else{
-        setProgress(2,'Uploading '+mode+'…');
-      }
-    };
-    xhr.upload.onload=()=>{
-      setProgress(8,'Upload complete · waiting for AI engine');
-      if(progressTimer)clearInterval(progressTimer);
-      progressTimer=setInterval(async()=>{
-        try{
-          const r=await fetch(API_BASE+'/progress',{cache:'no-store'});
-          if(!r.ok)return;
-          const p=await r.json();
-          if(p.busy){
-            const percent=Math.max(2,Math.min(99,Number(p.percent)||2));
-            setProgress(percent,p.stage||'Enhancing media…');
-          }else if(typeof p.stage==='string'&&p.stage.startsWith('Failed:')){
-            setProgress(0,p.stage);
-          }
-        }catch(e){}
-      },650);
-    };
-    xhr.onload=async()=>{
-      if(xhr.status>=200&&xhr.status<300){
-        resolve(xhr.response);
-        return;
-      }
-      let detail='Enhancement failed ('+(xhr.status||'unknown status')+').';
-      try{
-        if(xhr.response&&typeof xhr.response.text==='function'){
-          const body=await xhr.response.text();
-          try{const parsed=JSON.parse(body);if(parsed.detail)detail=parsed.detail;}
-          catch(e){if(body.trim())detail=body.trim().slice(0,300);}
-        }
-      }catch(e){}
-      reject(new Error(detail));
-    };
-    xhr.onerror=()=>reject(new Error('Network error. Check the Colab engine and its Cloudflare tunnel.'));
-    xhr.ontimeout=()=>reject(new Error('Processing timed out. Check that Colab is still running.'));
-    xhr.onabort=()=>reject(new Error('Processing was cancelled.'));
-    xhr.send(formData||null);
-  });
-}
-
-function newUploadId(){
-  const bytes=new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
-}
-async function sendChunkedVideoRequest(endpoint,videoFile){
-  // Small sequential parts are more reliable than one large mobile-browser POST.
-  // Each part retries automatically, without making the user select the video again.
-  const chunkSize=2*1024*1024;
-  const total=Math.ceil(videoFile.size/chunkSize);
-  const uploadId=newUploadId();
-  for(let index=0;index<total;index++){
-    const start=index*chunkSize;
-    const end=Math.min(videoFile.size,start+chunkSize);
-    const part=videoFile.slice(start,end);
-    const chunkUrl=new URL('/api/upload/chunk',API_BASE);
-    chunkUrl.searchParams.set('upload_id',uploadId);
-    chunkUrl.searchParams.set('index',String(index));
-    chunkUrl.searchParams.set('total',String(total));
-    let uploaded=false,lastError=null;
-    for(let attempt=1;attempt<=3&&!uploaded;attempt++){
-      try{
-        const body=new FormData();
-        body.append('file',part,'chunk.bin');
-        const response=await fetch(chunkUrl,{method:'POST',body,cache:'no-store'});
-        if(!response.ok){
-          let detail='Chunk upload failed ('+response.status+').';
-          try{const payload=await response.json();if(payload.detail)detail=payload.detail;}catch(e){}
-          throw new Error(detail);
-        }
-        const payload=await response.json();
-        if(!payload.ok)throw new Error('The server did not confirm video chunk '+(index+1)+'.');
-        uploaded=true;
-      }catch(error){
-        lastError=error;
-        if(attempt<3){
-          setProgress(1+Math.floor(7*(start/videoFile.size)),
-            'Retrying video upload · part '+(index+1)+'/'+total+' · attempt '+(attempt+1));
-          await new Promise(resolve=>setTimeout(resolve,600*attempt));
-        }
-      }
-    }
-    if(!uploaded)throw new Error('Could not upload video part '+(index+1)+'/'+total+'. '+(lastError?.message||'Network error.'));
-    setProgress(1+Math.floor(7*(end/videoFile.size)),
-      'Uploading video · '+Math.round(end/videoFile.size*100)+'% ('+(index+1)+'/'+total+')');
+  const source=formData.get('file');
+  if(!source||typeof source.slice!=='function')throw new Error('The selected media file is unavailable. Please choose it again.');
+  const originalName=source.name||(mode==='video'?'upload.mp4':'upload.png');
+  const chunkSize=1024*1024;
+  const parseResponse=async response=>{
+    let payload={};
+    try{payload=await response.json();}catch(e){}
+    if(!response.ok)throw new Error(payload.detail||payload.error||('Server returned '+response.status));
+    return payload;
+  };
+  let init;
+  try{
+    init=await parseResponse(await fetch(API_BASE+'/api/upload/init',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({filename:originalName,kind:mode,size:source.size})
+    }));
+  }catch(e){throw new Error('Could not start the upload: '+e.message);}
+  const totalChunks=Math.ceil(source.size/chunkSize);
+  for(let index=0;index<totalChunks;index++){
+    const start=index*chunkSize,end=Math.min(source.size,start+chunkSize);
+    const chunkData=new FormData();
+    chunkData.append('upload_id',init.upload_id);
+    chunkData.append('index',String(index));
+    chunkData.append('file',source.slice(start,end),originalName+'.part');
+    try{
+      await parseResponse(await fetch(API_BASE+'/api/upload/chunk',{method:'POST',body:chunkData}));
+    }catch(e){throw new Error('Upload stopped at part '+(index+1)+' of '+totalChunks+'. '+e.message);}
+    setProgress(1+Math.round(((index+1)/totalChunks)*7),'Uploading '+mode+' · part '+(index+1)+'/'+totalChunks);
   }
-  const finishUrl=new URL('/api/enhance/video/chunked',API_BASE);
-  endpoint.searchParams.forEach((value,key)=>finishUrl.searchParams.set(key,value));
-  finishUrl.searchParams.set('upload_id',uploadId);
-  finishUrl.searchParams.set('total_chunks',String(total));
-  finishUrl.searchParams.set('filename',videoFile.name||'video.mp4');
-  setProgress(8,'Video uploaded · starting AI enhancement');
-  return await sendEnhancementRequest(finishUrl,null);
+  setProgress(9,'Upload complete · starting AI enhancement');
+  let started;
+  try{
+    started=await parseResponse(await fetch(API_BASE+'/api/jobs/start',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({upload_id:init.upload_id,settings:Object.fromEntries(endpoint.searchParams.entries())})
+    }));
+  }catch(e){throw new Error('Upload finished, but the AI job could not start: '+e.message);}
+  const deadline=Date.now()+45*60*1000;
+  while(Date.now()<deadline){
+    const state=await parseResponse(await fetch(API_BASE+'/api/jobs/'+encodeURIComponent(started.job_id),{cache:'no-store'}));
+    if(state.status==='complete'){
+      setProgress(100,'Preparing your download');
+      const result=await fetch(API_BASE+'/api/jobs/'+encodeURIComponent(started.job_id)+'/result',{cache:'no-store'});
+      if(!result.ok)throw new Error('The engine finished, but the result could not be downloaded ('+result.status+').');
+      const blob=await result.blob();
+      if(!blob.size)throw new Error('The engine returned an empty result.');
+      return blob;
+    }
+    if(state.status==='failed')throw new Error(state.error||'The AI engine could not process this file.');
+    setProgress(Math.max(9,Math.min(98,Number(state.percent)||9)),state.stage||'Enhancing media…');
+    await new Promise(resolve=>setTimeout(resolve,850));
+  }
+  throw new Error('Processing is taking too long. The job may still be running in Colab.');
 }
-
 function clearFile(){
   if(busy)return;
   if(previewUrl)URL.revokeObjectURL(previewUrl);
@@ -452,7 +399,7 @@ $('run').onclick=async()=>{
     $('stickyTitle').textContent='Enhancement could not finish';
     $('stickyHint').textContent='Check the connection and the error message above.';
   }finally{
-    if(progressTimer){clearInterval(progressTimer);progressTimer=null;}
+    
     $('progress').classList.remove('indeterminate');
     setBusy(false);
   }

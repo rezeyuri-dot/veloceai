@@ -441,30 +441,36 @@ def enhance_frame(src: Path, dst: Path, scale: int, sharpness: float, denoise: i
     target_size = (original_size[0] * scale, original_size[1] * scale)
     if result.size != target_size:
         result = result.resize(target_size, Image.Resampling.LANCZOS)
-    if anti_alias > 0:
+    if anti_alias > 0 or line_detail > 0 or sharpness > 1:
         import cv2
-        rgb = np.asarray(result)
-        strength = anti_alias / 100.0
-        smooth = cv2.bilateralFilter(rgb, d=5, sigmaColor=18 + 52*strength,
-                                     sigmaSpace=2 + 3*strength)
-        result = Image.fromarray(cv2.addWeighted(rgb, 1.0 - 0.58*strength,
-                                                  smooth, 0.58*strength, 0))
-    if line_detail > 0:
-        import cv2
-        rgb = np.asarray(result).astype(np.float32)
-        u8 = np.clip(rgb, 0, 255).astype(np.uint8)
-        luma = cv2.cvtColor(u8, cv2.COLOR_RGB2GRAY).astype(np.float32)
-        base = cv2.GaussianBlur(luma, (0, 0), sigmaX=0.85)
-        gx = cv2.Sobel(luma, cv2.CV_32F, 1, 0, ksize=3)
-        gy = cv2.Sobel(luma, cv2.CV_32F, 0, 1, ksize=3)
-        magnitude = cv2.magnitude(gx, gy)
-        mask = np.clip((magnitude - 10.0) / 45.0, 0.0, 1.0)
-        amount = (line_detail / 100.0) * (1.35 if profile == "anime" else 0.7)
-        delta = (luma - base) * amount * mask
-        result = Image.fromarray(np.clip(rgb + delta[:, :, None], 0, 255).astype(np.uint8))
-    if sharpness > 1:
-        from PIL import ImageEnhance
-        result = ImageEnhance.Sharpness(result).enhance(sharpness)
+        # Apply optional finishing controls to luminance only. LAB chroma channels
+        # are carried through unchanged to avoid intentional hue/saturation shifts.
+        lab = cv2.cvtColor(np.asarray(result), cv2.COLOR_RGB2LAB)
+        luma, chroma_a, chroma_b = cv2.split(lab)
+        work = luma.astype(np.float32)
+
+        if anti_alias > 0:
+            strength = anti_alias / 100.0
+            smooth = cv2.bilateralFilter(
+                luma, d=5, sigmaColor=18 + 52*strength, sigmaSpace=2 + 3*strength
+            )
+            work = work * (1.0 - 0.58*strength) + smooth.astype(np.float32) * (0.58*strength)
+
+        if line_detail > 0:
+            base = cv2.GaussianBlur(work, (0, 0), sigmaX=0.85)
+            gx = cv2.Sobel(work, cv2.CV_32F, 1, 0, ksize=3)
+            gy = cv2.Sobel(work, cv2.CV_32F, 0, 1, ksize=3)
+            magnitude = cv2.magnitude(gx, gy)
+            mask = np.clip((magnitude - 10.0) / 45.0, 0.0, 1.0)
+            amount = (line_detail / 100.0) * (1.35 if profile == "anime" else 0.7)
+            work = work + (work - base) * amount * mask
+
+        if sharpness > 1:
+            base = cv2.GaussianBlur(work, (0, 0), sigmaX=1.0)
+            work = work + (work - base) * (sharpness - 1.0) * 1.5
+
+        merged = cv2.merge((np.clip(work, 0, 255).astype(np.uint8), chroma_a, chroma_b))
+        result = Image.fromarray(cv2.cvtColor(merged, cv2.COLOR_LAB2RGB))
     result.save(dst)
 
 @app.post("/api/enhance/image")

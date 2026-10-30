@@ -173,6 +173,16 @@ def load_model():
             descriptor = loaded
     return descriptor
 
+@app.post("/warmup")
+def warmup():
+    """Download and load the AI model during Colab startup, not on the first user upload."""
+    try:
+        load_model()
+        return {"ok": True, "model_loaded": True, "device": DEVICE}
+    except Exception as exc:
+        raise HTTPException(503, "AI model warm-up failed: " + str(exc)) from exc
+
+
 @app.get("/health")
 def health():
     # Liveness only: do not download/load the model during every page open.

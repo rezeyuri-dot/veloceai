@@ -231,8 +231,14 @@ def enhance_frame(src: Path, dst: Path, scale: int, sharpness: float, denoise: i
                   profile: str = "general", line_detail: int = 0, anti_alias: int = 0):
     model = load_model(profile)
     im = Image.open(src).convert("RGB")
-    # Denoise at source resolution before upscaling. Running NLM on the 4x
-    # output was needlessly expensive (up to 16x as many pixels per frame).
+    # For requested 2x output, feed half-size input to the native x4 model.
+    # This produces the requested dimensions directly and uses about 1/4
+    # the neural compute of x4-then-downsample (the old, unnecessarily slow path).
+    original_size = im.size
+    if scale == 2:
+        work_size = (max(1, (im.width + 1) // 2), max(1, (im.height + 1) // 2))
+        im = im.resize(work_size, Image.Resampling.LANCZOS)
+    # Denoise at working resolution before upscaling, never on the 4x output.
     if denoise:
         import cv2
         source = np.asarray(im)
@@ -251,11 +257,11 @@ def enhance_frame(src: Path, dst: Path, scale: int, sharpness: float, denoise: i
             y = model.model(x).clamp(0,1)
     else:
         y = model.model(x).clamp(0,1)
-    if scale == 2:
-        h,w = y.shape[-2:]
-        y = torch.nn.functional.interpolate(y, size=(h//2,w//2), mode="bicubic", align_corners=False)
+    # The 2x path is already at target dimensions because its input was halved above.
     out = (y.squeeze(0).permute(1,2,0).cpu().numpy()*255.0).round().clip(0,255).astype(np.uint8)
     result = Image.fromarray(out)
+    if scale == 2 and result.size != (original_size[0] * 2, original_size[1] * 2):
+        result = result.resize((original_size[0] * 2, original_size[1] * 2), Image.Resampling.LANCZOS)
     # Classical edge-aware post-processing after Real-ESRGAN; not a separate AI model.
     if anti_alias > 0:
         import cv2

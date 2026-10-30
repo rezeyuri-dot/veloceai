@@ -54,8 +54,10 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False,
 async def log_enhancement_requests(request, call_next):
     """Log upload arrival and completion so tunnel failures are distinguishable from AI failures."""
     is_enhancement = request.method == "POST" and (
-        request.url.path in ("/api/enhance/image", "/api/enhance/video", "/api/enhance/video/chunked")
-        or request.url.path == "/api/upload/chunk"
+        request.url.path in (
+            "/api/enhance/image", "/api/enhance/video", "/api/enhance/video/chunked",
+            "/api/upload/init", "/api/upload/chunk", "/api/jobs/start"
+        )
     )
     started = time.monotonic()
     if is_enhancement:
@@ -118,8 +120,21 @@ def track_progress(func):
 
 @app.get("/")
 def home():
-    """Serve the frontend and API from one permanent origin."""
-    return FileResponse(Path(__file__).with_name("index.html"), media_type="text/html")
+    """Serve the current frontend without allowing stale mobile-browser copies."""
+    html_path = Path(__file__).with_name("index.html")
+    try:
+        page = html_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(503, "The VeloceAI frontend file is unavailable.") from exc
+    return Response(
+        content=page,
+        media_type="text/html",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @app.get("/progress")

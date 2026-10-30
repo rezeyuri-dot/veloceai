@@ -20,18 +20,29 @@ MODEL_URL = os.environ.get(
     "MODEL_URL",
     "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
 )
+ANIME_MODEL = Path(os.environ.get("ANIME_MODEL_PATH", "/content/RealESRGAN_x4plus_anime_6B.pth"))
+ANIME_MODEL_URL = os.environ.get(
+    "ANIME_MODEL_URL",
+    "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth"
+)
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-# Avoid CPU thread oversubscription on Colab; use AMP on CUDA in enhance_frame.
+# Avoid CPU thread oversubscription; OpenCV must not spawn another worker pool.
 if DEVICE == "cpu":
     torch.set_num_threads(max(1, min(4, os.cpu_count() or 2)))
     try:
         torch.set_num_interop_threads(1)
     except RuntimeError:
         pass
+    try:
+        import cv2
+        cv2.setNumThreads(1)
+        cv2.ocl.setUseOpenCL(False)
+    except Exception:
+        pass
 elif DEVICE == "cuda":
     torch.backends.cudnn.benchmark = True
 
-app = FastAPI(title="VeloceAI Restoration Engine", version="2.0")
+app = FastAPI(title="VeloceAI Restoration Engine", version="2.1")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False,
                    allow_methods=["GET","POST","OPTIONS"], allow_headers=["*"])
 
@@ -62,7 +73,7 @@ async def log_enhancement_requests(request, call_next):
         )
     return response
 
-descriptor = None
+descriptors = {}
 MODEL_LOCK = Lock()
 PROCESS_LOCK = Lock()
 progress_state = {"percent": 0, "stage": "idle", "busy": False}
@@ -135,50 +146,51 @@ def preview_video(file: UploadFile = File(...)):
         return Response(thumb.read_bytes(), media_type="image/png",
                         headers={"Cache-Control": "no-store"})
 
-def load_model():
-    global descriptor
-    if descriptor is not None:
-        return descriptor
-    # A hosted Space downloads the model automatically on its first request.
-    # Colab can keep using the model downloaded by its setup cell.
+def load_model(profile="general"):
+    """Load and cache a model matched to the selected content profile."""
+    key = "anime" if profile == "anime" else "standard"
+    model_path = ANIME_MODEL if key == "anime" else MODEL
+    model_url = ANIME_MODEL_URL if key == "anime" else MODEL_URL
+    if key in descriptors:
+        return descriptors[key]
     with MODEL_LOCK:
-        if descriptor is None:
-            if not MODEL.is_file():
-                if progress_state.get("busy"):
-                    set_progress(max(8, progress_state.get("percent", 1)),
-                                 "Downloading Real-ESRGAN model weights")
-                MODEL.parent.mkdir(parents=True, exist_ok=True)
-                temporary_model = MODEL.with_suffix(MODEL.suffix + ".download")
-                try:
-                    request = urllib.request.Request(
-                        MODEL_URL,
-                        headers={"User-Agent": "VeloceAI/1.0"}
-                    )
-                    with urllib.request.urlopen(request, timeout=120) as response, open(temporary_model, "wb") as target:
-                        shutil.copyfileobj(response, target)
-                    if temporary_model.stat().st_size < 20 * 1024 * 1024:
-                        raise RuntimeError("Downloaded model file is too small or incomplete.")
-                    temporary_model.replace(MODEL)
-                except Exception:
-                    if temporary_model.exists():
-                        temporary_model.unlink()
-                    raise
+        if key in descriptors:
+            return descriptors[key]
+        if not model_path.is_file():
             if progress_state.get("busy"):
-                set_progress(max(10, progress_state.get("percent", 1)),
-                             "Loading Real-ESRGAN model")
-            loaded = ModelLoader().load_from_file(MODEL)
-            loaded.model.eval().to(DEVICE)
-            if DEVICE == "cuda":
-                loaded.model.to(memory_format=torch.channels_last)
-            descriptor = loaded
-    return descriptor
+                set_progress(max(8, progress_state.get("percent", 1)),
+                             "Downloading " + ("compact anime" if key == "anime" else "standard") + " model")
+            model_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary_model = model_path.with_suffix(model_path.suffix + ".download")
+            try:
+                request = urllib.request.Request(model_url, headers={"User-Agent": "VeloceAI/2.1"})
+                with urllib.request.urlopen(request, timeout=180) as response, open(temporary_model, "wb") as target:
+                    shutil.copyfileobj(response, target)
+                minimum_size = 10 * 1024 * 1024 if key == "anime" else 40 * 1024 * 1024
+                if temporary_model.stat().st_size < minimum_size:
+                    raise RuntimeError("Downloaded model file is too small or incomplete.")
+                temporary_model.replace(model_path)
+            except Exception:
+                if temporary_model.exists():
+                    temporary_model.unlink()
+                raise
+        if progress_state.get("busy"):
+            set_progress(max(10, progress_state.get("percent", 1)),
+                         "Loading " + ("compact anime" if key == "anime" else "standard") + " model")
+        loaded = ModelLoader().load_from_file(model_path)
+        loaded.model.eval().to(DEVICE)
+        loaded.model.to(memory_format=torch.channels_last)
+        descriptors[key] = loaded
+    return descriptors[key]
 
 @app.post("/warmup")
-def warmup():
-    """Download and load the AI model during Colab startup, not on the first user upload."""
+def warmup(profile: str = "anime"):
+    """Download and load the selected AI model during Colab startup."""
     try:
-        load_model()
-        return {"ok": True, "model_loaded": True, "device": DEVICE}
+        if profile not in ("general", "anime", "real"):
+            raise HTTPException(400, "Invalid processing profile.")
+        load_model(profile)
+        return {"ok": True, "model_loaded": True, "profile": profile, "device": DEVICE}
     except Exception as exc:
         raise HTTPException(503, "AI model warm-up failed: " + str(exc)) from exc
 
@@ -190,8 +202,9 @@ def health():
         "ok": True,
         "engine": "Real-ESRGAN x4plus via Spandrel",
         "device": DEVICE,
-        "model_loaded": descriptor is not None,
-        "message": "ready" if descriptor is not None else "model loads automatically on first enhancement"
+        "model_loaded": bool(descriptors),
+        "models_loaded": sorted(descriptors.keys()),
+        "message": "ready" if descriptors else "models load automatically on first enhancement"
     }
 
 def validate(scale, sharpness, denoise, crf, profile, line_detail, anti_alias):
@@ -206,7 +219,7 @@ def validate(scale, sharpness, denoise, crf, profile, line_detail, anti_alias):
         if progress_state.get("busy") and descriptor is None:
             set_progress(max(8, progress_state.get("percent", 1)),
                          "Loading AI model · first startup may take longer")
-        load_model()
+        load_model(profile)
         if progress_state.get("busy"):
             set_progress(max(8, progress_state.get("percent", 1)), "AI model ready · preparing media")
     except Exception as e:
@@ -215,7 +228,7 @@ def validate(scale, sharpness, denoise, crf, profile, line_detail, anti_alias):
 @torch.inference_mode()
 def enhance_frame(src: Path, dst: Path, scale: int, sharpness: float, denoise: int,
                   profile: str = "general", line_detail: int = 0, anti_alias: int = 0):
-    model = load_model()
+    model = load_model(profile)
     im = Image.open(src).convert("RGB")
     # Denoise at source resolution before upscaling. Running NLM on the 4x
     # output was needlessly expensive (up to 16x as many pixels per frame).

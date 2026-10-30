@@ -249,7 +249,11 @@ async function sendEnhancementRequest(endpoint,formData){
   const parseResponse=async response=>{
     let payload={};
     try{payload=await response.json();}catch(e){}
-    if(!response.ok)throw new Error(payload.detail||payload.error||('Server returned '+response.status));
+    if(!response.ok){
+      const error=new Error(payload.detail||payload.error||('Server returned '+response.status));
+      error.status=response.status;
+      throw error;
+    }
     return payload;
   };
   let init;
@@ -266,9 +270,18 @@ async function sendEnhancementRequest(endpoint,formData){
     chunkData.append('upload_id',init.upload_id);
     chunkData.append('index',String(index));
     chunkData.append('file',source.slice(start,end),originalName+'.part');
-    try{
-      await parseResponse(await fetch(API_BASE+'/api/upload/chunk',{method:'POST',body:chunkData}));
-    }catch(e){throw new Error('Upload stopped at part '+(index+1)+' of '+totalChunks+'. '+e.message);}
+    let chunkUploaded=false,lastChunkError=null;
+    for(let attempt=1;attempt<=3&&!chunkUploaded;attempt++){
+      try{
+        await parseResponse(await fetch(API_BASE+'/api/upload/chunk',{method:'POST',body:chunkData}));
+        chunkUploaded=true;
+      }catch(e){
+        lastChunkError=e;
+        if(e.status&&e.status<500&&e.status!==429)break;
+        if(attempt<3)await new Promise(resolve=>setTimeout(resolve,500*attempt));
+      }
+    }
+    if(!chunkUploaded)throw new Error('Upload stopped at part '+(index+1)+' of '+totalChunks+'. '+(lastChunkError?.message||'Connection failed.'));
     setProgress(1+Math.round(((index+1)/totalChunks)*7),'Uploading '+mode+' · part '+(index+1)+'/'+totalChunks);
   }
   setProgress(9,'Upload complete · starting AI enhancement');

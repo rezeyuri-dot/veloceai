@@ -87,7 +87,7 @@ button,input,select{font:inherit;color:inherit}button{cursor:pointer}.wrap{max-w
 
 <script>
 const $=id=>document.getElementById(id);
-const API_BASE='https://adjustments-reg-tourist-nice.trycloudflare.com';
+const API_BASE=location.hostname.endsWith('.hf.space')?location.origin:'https://adjustments-reg-tourist-nice.trycloudflare.com';
 const IMAGE_EXT=/\.(png|jpe?g|webp|bmp)$/i;
 const VIDEO_EXT=/\.(mp4|mov|mkv|webm)$/i;
 let file=null,mode='',previewUrl=null,resultUrl=null,resultBlob=null,progressTimer=null,metadataValid=false,busy=false;
@@ -139,9 +139,10 @@ async function health(){
     const j=await r.json();
     if(r.ok&&j.ok){
       const gpu=String(j.device||'').toLowerCase()==='cuda';
-      $('engineState').textContent=gpu?'AI engine ready · GPU':'AI engine ready · CPU (slower)';
+      const loaded=Boolean(j.model_loaded);
+      $('engineState').textContent=loaded?(gpu?'AI model ready · GPU':'AI model ready · CPU'):(gpu?'Engine online · GPU · model loads on first use':'Engine online · CPU · slower');
       $('engineDot').className='dot ready';
-      $('engineDot').title=gpu?'GPU acceleration is active':'CPU processing is slower; select a GPU runtime in Colab if available.';
+      $('engineDot').title=loaded?(gpu?'GPU acceleration is active':'CPU processing is slower'):'The model loads automatically when the first enhancement starts.';
     }else{$('engineState').textContent='Engine needs attention';$('engineDot').className='dot bad';}
   }catch(e){$('engineState').textContent='Engine disconnected';$('engineDot').className='dot bad';}
 }

@@ -140,6 +140,16 @@ def enhance_frame(src: Path, dst: Path, scale: int, sharpness: float, denoise: i
                   profile: str = "general", line_detail: int = 0, anti_alias: int = 0):
     model = load_model()
     im = Image.open(src).convert("RGB")
+    # Denoise at source resolution before upscaling. Running NLM on the 4x
+    # output was needlessly expensive (up to 16x as many pixels per frame).
+    if denoise:
+        import cv2
+        source = np.asarray(im)
+        lab = cv2.cvtColor(source, cv2.COLOR_RGB2LAB)
+        luma, channel_a, channel_b = cv2.split(lab)
+        luma = cv2.fastNlMeansDenoising(luma, None, denoise / 100 * 8, 7, 21)
+        clean = cv2.cvtColor(cv2.merge((luma, channel_a, channel_b)), cv2.COLOR_LAB2RGB)
+        im = Image.fromarray(clean)
     arr = np.asarray(im).astype(np.float32) / 255.0
     x = torch.from_numpy(arr).permute(2,0,1).unsqueeze(0).to(DEVICE)
     if DEVICE == "cuda":
@@ -155,12 +165,6 @@ def enhance_frame(src: Path, dst: Path, scale: int, sharpness: float, denoise: i
         y = torch.nn.functional.interpolate(y, size=(h//2,w//2), mode="bicubic", align_corners=False)
     out = (y.squeeze(0).permute(1,2,0).cpu().numpy()*255.0).round().clip(0,255).astype(np.uint8)
     result = Image.fromarray(out)
-    if denoise:
-        import cv2
-        a = cv2.cvtColor(np.asarray(result), cv2.COLOR_RGB2LAB)
-        l,aa,bb = cv2.split(a)
-        l = cv2.fastNlMeansDenoising(l,None,denoise/100*8,7,21)
-        result = Image.fromarray(cv2.cvtColor(cv2.merge((l,aa,bb)),cv2.COLOR_LAB2RGB))
     # Classical edge-aware post-processing after Real-ESRGAN; not a separate AI model.
     if anti_alias > 0:
         import cv2
@@ -248,11 +252,31 @@ def enhance_video(file:UploadFile=File(...), scale:int=2, denoise:int=25,
         estimated_frames = max(1, int(duration * fps_value))
         crop_filter = None
         if crop_black_bars:
-            set_progress(8, "Detecting black bars")
-            detect=subprocess.run(["ffmpeg","-hide_banner","-i",str(src),"-vf","cropdetect=24:16:0","-frames:v","120","-f","null","-"],capture_output=True,text=True)
+            set_progress(7, "Detecting black bars · 0%")
+            sample_duration = min(duration, 120 / max(fps_value, 1.0))
+            detect_cmd=["ffmpeg","-hide_banner","-nostats","-stats_period","0.5",
+                        "-progress","pipe:1","-i",str(src),"-vf","cropdetect=24:16:0",
+                        "-frames:v","120","-f","null","-"]
+            detect=subprocess.Popen(detect_cmd,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
+                                    text=True,bufsize=1)
+            detect_lines=[]
+            for raw_line in detect.stdout:
+                line=raw_line.strip()
+                if line:
+                    detect_lines.append(line)
+                    detect_lines=detect_lines[-160:]
+                if line.startswith("out_time_ms="):
+                    try:
+                        elapsed=max(0,int(line.split("=",1)[1]))/1_000_000
+                        ratio=min(1.0,elapsed/max(sample_duration,0.001))
+                        set_progress(7 + int(ratio),
+                                     f"Detecting black bars · {round(ratio*100)}%")
+                    except ValueError:
+                        pass
+            detect_code=detect.wait()
             import re
-            crops=re.findall(r"crop=(\d+:\d+:\d+:\d+)",detect.stderr)
-            if crops:
+            crops=re.findall(r"crop=(\d+:\d+:\d+:\d+)", "\\n".join(detect_lines))
+            if detect_code == 0 and crops:
                 crop_filter=crops[-1]
         # FFmpeg extraction used to block at a fixed 8% until every PNG was written.
         # Its progress pipe now advances the UI while frames are being decoded.
